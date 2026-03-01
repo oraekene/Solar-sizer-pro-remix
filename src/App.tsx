@@ -67,8 +67,12 @@ export default function App() {
   const [inverters, setInverters] = useState<Inverter[]>(() => {
     const saved = localStorage.getItem("ss_inverters");
     const data: Inverter[] = saved ? JSON.parse(saved) : DEFAULT_INVERTERS;
-    // Migration: Ensure all have IDs
-    return data.map((item, idx) => ({ ...item, id: item.id || `inv-legacy-${idx}` }));
+    // Migration: Ensure all have IDs and cc_type
+    return data.map((item, idx) => ({ 
+      ...item, 
+      id: item.id || `inv-legacy-${idx}`,
+      cc_type: item.cc_type || "pwm"
+    }));
   });
   const [panels, setPanels] = useState<Panel[]>(() => {
     const saved = localStorage.getItem("ss_panels");
@@ -788,6 +792,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                         <span>Max AC: {inv.max_ac_w}W</span>
                         <span>DC Volts: {inv.system_vdc}V</span>
                         <span>PV Input: {inv.cc_max_pv_w}W</span>
+                        <span className="uppercase">CC: {inv.cc_type || "pwm"}</span>
                         <span>Price: ₦{inv.price.toLocaleString()}</span>
                       </div>
                     </div>
@@ -1243,6 +1248,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       cc_max_amps: Number(fd.get("cc_max_amps")),
                       system_vdc: Number(fd.get("system_vdc")),
                       max_charge_amps: Number(fd.get("max_charge_amps")),
+                      cc_type: fd.get("cc_type") as "pwm" | "mppt",
                     };
                     if (editingHardware) {
                       setInverters(inverters.map(i => i.id === editingHardware.id ? data : i));
@@ -1304,6 +1310,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                             <div><label className="block text-xs font-bold uppercase text-stone-500 mb-1">Max Voc (V)</label><input name="cc_max_voc" type="number" defaultValue={(currentItem as Inverter)?.cc_max_voc} required className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl" /></div>
                             <div><label className="block text-xs font-bold uppercase text-stone-500 mb-1">Max Amps (A)</label><input name="cc_max_amps" type="number" defaultValue={(currentItem as Inverter)?.cc_max_amps} required className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl" /></div>
                             <div><label className="block text-xs font-bold uppercase text-stone-500 mb-1">Charge Amps (A)</label><input name="max_charge_amps" type="number" defaultValue={(currentItem as Inverter)?.max_charge_amps} required className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl" /></div>
+                            <div><label className="block text-xs font-bold uppercase text-stone-500 mb-1">CC Type</label><select name="cc_type" defaultValue={(currentItem as Inverter)?.cc_type || "pwm"} required className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl"><option value="pwm">PWM</option><option value="mppt">MPPT</option></select></div>
                           </>
                         )}
                         {showAddHardware === "panel" && (

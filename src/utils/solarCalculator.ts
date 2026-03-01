@@ -46,7 +46,79 @@ export function calculateUserNeeds(devices: Device[]): LoadAnalysis {
     0
   );
 
-  return { max_surge: maxSurge, nighttime_wh: nighttimeWh, total_daily_wh: totalDailyWh };
+  return { 
+    max_surge: maxSurge, 
+    nighttime_wh: nighttimeWh, 
+    total_daily_wh: totalDailyWh,
+    hourly_consumption: hourlyConsumption
+  };
+}
+
+export function simulateHourlySoC(
+  hourlyLoad: Record<number, number>,
+  totalDailyYield: number,
+  usableBatteryWh: number,
+  maxChargeW: number,
+  ccType: "pwm" | "mppt"
+): { passed: boolean; lowestSoCWh: number; finalDeficitWh: number } {
+  // 1. Apply Charge Controller Efficiency
+  const ccEfficiency = ccType === "mppt" ? 0.95 : 0.65;
+  const actualDailyYield = totalDailyYield * ccEfficiency;
+
+  // Generate the hour-by-hour solar curve
+  const irradianceCurve: Record<number, number> = {
+    8: 0.03, 9: 0.09, 10: 0.15, 11: 0.20, 12: 0.23, 13: 0.18, 14: 0.09, 15: 0.03
+  };
+  const hourlySolarGen: Record<number, number> = {};
+  for (let h = 0; h < 24; h++) {
+    hourlySolarGen[h] = (irradianceCurve[h] || 0) * actualDailyYield;
+  }
+
+  // 2. Set up the Virtual Battery
+  // Start at 18:00 (6 PM) assuming a full battery
+  let currentBatteryWh = usableBatteryWh;
+  let lowestBatteryWh = usableBatteryWh;
+
+  // Loop from 18 to 23, then 0 to 17
+  const simulationHours = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+
+  for (const h of simulationHours) {
+    const load = hourlyLoad[h] || 0;
+    const gen = hourlySolarGen[h] || 0;
+
+    // Priority 1: Solar powers the active load first
+    const netPower = gen - load;
+
+    if (netPower > 0) {
+      // Priority 2: Excess solar goes to the battery
+      const chargeAdded = Math.min(netPower, maxChargeW);
+      currentBatteryWh += chargeAdded;
+
+      // Cap battery at 100% full
+      if (currentBatteryWh > usableBatteryWh) {
+        currentBatteryWh = usableBatteryWh;
+      }
+    } else {
+      // Deficit: Pull from battery
+      currentBatteryWh += netPower; // netPower is negative
+    }
+
+    // 3. Failure Check
+    if (currentBatteryWh < lowestBatteryWh) {
+      lowestBatteryWh = currentBatteryWh;
+    }
+
+    if (currentBatteryWh < 0) {
+      return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: Math.abs(currentBatteryWh) };
+    }
+  }
+
+  // Check if battery recharged by end of next day (5 PM)
+  if (currentBatteryWh < usableBatteryWh * 0.95) {
+    return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: usableBatteryWh - currentBatteryWh };
+  }
+
+  return { passed: true, lowestSoCWh: lowestBatteryWh, finalDeficitWh: 0 };
 }
 
 export function getLoadSheddingAdvice(devices: Device[], deficit: number): string {
@@ -228,27 +300,41 @@ export function buildCombinations(
           panelLog.push(`Note: Array size (${arrayWatts}W) exceeds charge controller PV input (${inv.cc_max_pv_w}W). Clipping will occur.`);
         }
 
-        const dailyYield = usableArrayWatts * psh * 0.8;
-        panelLog.push(`Estimated daily yield: ${dailyYield.toFixed(0)}Wh.`);
-
-        // --- THE NEW TOLERANCE LOGIC ---
-        const deficit = total_daily_wh - dailyYield;
-        const deficitPercentage = total_daily_wh > 0 ? (deficit / total_daily_wh) * 100 : 0;
+        const dailyYield = usableArrayWatts * psh; // Base daily yield before CC efficiency
+        const ccType = inv.cc_type || "pwm";
+        const ccEfficiency = ccType === "mppt" ? 0.95 : 0.65;
+        panelLog.push(`Charge Controller: ${ccType.toUpperCase()} (Efficiency: ${ccEfficiency * 100}%).`);
+        panelLog.push(`Adjusted Daily Yield: ${(dailyYield * ccEfficiency).toFixed(0)}Wh.`);
+        
+        // --- THE NEW HOURLY PHYSICS ENGINE ---
+        const totalUsableBatteryWh = totalUsablePerString * parallelStrings;
+        const maxChargeW = inv.max_charge_amps * inv.system_vdc;
+        
+        const sim = simulateHourlySoC(
+          analysis.hourly_consumption,
+          dailyYield,
+          totalUsableBatteryWh,
+          maxChargeW,
+          ccType
+        );
 
         let status: "Optimal" | "Conditional" | null = null;
         let advice = "";
+        const deficit = sim.finalDeficitWh;
 
-        if (deficit <= 0) {
+        if (sim.passed) {
           status = "Optimal";
-          advice = "Perfect match. Fully covers your scheduled daily energy needs.";
-          panelLog.push(`✅ System covers 100% of daily load.`);
-        } else if (deficitPercentage <= 20) {
-          status = "Conditional";
-          // Call our new smart advice function!
-          advice = getLoadSheddingAdvice(devices, deficit);
-          panelLog.push(`⚠️ System is slightly undersized (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
+          advice = "Perfect match. Fully covers your scheduled daily energy needs based on hourly simulation.";
+          panelLog.push(`✅ System passed 24-hour hourly stress test.`);
         } else {
-          panelLog.push(`❌ Rejected: Daily yield (${dailyYield.toFixed(0)}Wh) is less than required load (${total_daily_wh}Wh) by more than 20%.`);
+          const deficitPercentage = total_daily_wh > 0 ? (deficit / total_daily_wh) * 100 : 0;
+          if (deficitPercentage <= 20) {
+            status = "Conditional";
+            advice = getLoadSheddingAdvice(devices, deficit);
+            panelLog.push(`⚠️ System failed hourly simulation (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
+          } else {
+            panelLog.push(`❌ Rejected: Hourly simulation failed with ${deficit.toFixed(0)}Wh deficit (>20% tolerance).`);
+          }
         }
 
         if (status) {
@@ -263,7 +349,7 @@ export function buildCombinations(
             panel_price: totalPanelPrice,
             array_size_w: arrayWatts,
             total_price: totalSystemPrice,
-            daily_yield: dailyYield,
+            daily_yield: dailyYield * ((inv.cc_type || "pwm") === "mppt" ? 0.95 : 0.65), // Show actual yield in UI
             deficit,
             status,
             advice,

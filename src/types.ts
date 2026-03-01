@@ -27,6 +27,7 @@ export interface Inverter {
   cc_max_amps: number;
   system_vdc: number;
   max_charge_amps: number;
+  cc_type: "pwm" | "mppt";
   price: number;
 }
 
@@ -54,6 +55,7 @@ export interface LoadAnalysis {
   max_surge: number;
   nighttime_wh: number;
   total_daily_wh: number;
+  hourly_consumption: Record<number, number>;
 }
 
 export interface SystemCombination {
