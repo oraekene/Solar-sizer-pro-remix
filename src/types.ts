@@ -69,7 +69,7 @@ export interface SystemCombination {
   total_price: number;
   daily_yield: number;
   deficit: number;
-  status: "Optimal" | "Conditional";
+  status: "Optimal" | "Conditional" | "High Risk";
   advice: string;
   log: string[];
 }

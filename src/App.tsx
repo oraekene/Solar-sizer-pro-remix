@@ -26,7 +26,8 @@ import {
   UserCircle,
   Save,
   FolderOpen,
-  Copy
+  Copy,
+  Download
 } from "lucide-react";
 import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
@@ -172,6 +173,45 @@ export default function App() {
 
   const deleteProfile = (id: string) => {
     setProfiles(profiles.filter(p => p.id !== id));
+  };
+
+  const exportHardwareDatabase = () => {
+    const timestamp = new Date().toISOString().split('T')[0];
+    let content = `# Solar Sizing Hardware Database Export\n`;
+    content += `Generated on: ${new Date().toLocaleString()}\n\n`;
+
+    content += `## 1. INVERTERS\n`;
+    content += `| Name | Max AC (W) | DC Volts (V) | PV Input (W) | CC Type | Max Charge (A) | Price (₦) |\n`;
+    content += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    inverters.forEach(inv => {
+      content += `| ${inv.name} | ${inv.max_ac_w} | ${inv.system_vdc} | ${inv.cc_max_pv_w} | ${(inv.cc_type || "pwm").toUpperCase()} | ${inv.max_charge_amps} | ${inv.price.toLocaleString()} |\n`;
+    });
+    content += `\n`;
+
+    content += `## 2. SOLAR PANELS\n`;
+    content += `| Name | Watts (W) | Voc (V) | Isc (A) | Price (₦) |\n`;
+    content += `| :--- | :--- | :--- | :--- | :--- |\n`;
+    panels.forEach(p => {
+      content += `| ${p.name} | ${p.watts} | ${p.voc} | ${p.isc} | ${p.price.toLocaleString()} |\n`;
+    });
+    content += `\n`;
+
+    content += `## 3. BATTERIES\n`;
+    content += `| Name | Voltage (V) | Capacity (Ah) | Type | Min C-Rate | Price (₦) |\n`;
+    content += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    batteries.forEach(b => {
+      content += `| ${b.name} | ${b.voltage} | ${b.capacity_ah} | ${b.type} | ${b.min_c_rate} | ${b.price.toLocaleString()} |\n`;
+    });
+
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Solar_Hardware_Database_${timestamp}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const addDevice = () => {
@@ -684,6 +724,10 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                                       <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
                                         <CheckCircle2 className="w-3 h-3" /> Perfect Match
                                       </span>
+                                    ) : sys.status === "High Risk" ? (
+                                      <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3" /> High Risk
+                                      </span>
                                     ) : (
                                       <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
                                         <AlertCircle className="w-3 h-3" /> Budget Option
@@ -712,7 +756,11 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                               </div>
 
                               {/* Advice Section */}
-                              <div className={`p-3 rounded-xl text-xs flex gap-2 items-start ${sys.status === 'Optimal' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 'bg-amber-50 text-amber-800 border border-amber-100'}`}>
+                              <div className={`p-3 rounded-xl text-xs flex gap-2 items-start ${
+                                sys.status === 'Optimal' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 
+                                sys.status === 'High Risk' ? 'bg-red-50 text-red-800 border border-red-100' :
+                                'bg-amber-50 text-amber-800 border border-amber-100'
+                              }`}>
                                 {sys.status === 'Optimal' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Info className="w-4 h-4 shrink-0" />}
                                 <p>{sys.advice}</p>
                               </div>
@@ -759,6 +807,12 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <p className="text-stone-500">Manage the components used in calculations.</p>
               </div>
               <div className="flex gap-2">
+                <button 
+                  onClick={exportHardwareDatabase}
+                  className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+                >
+                  <Download className="w-4 h-4" /> Export Database
+                </button>
                 <button onClick={() => setShowAddHardware("inverter")} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all">
                   <Plus className="w-4 h-4" /> Add Inverter
                 </button>
@@ -1121,12 +1175,20 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                   <div className="md:col-span-3 p-4 rounded-2xl flex items-start gap-3 border transition-colors bg-stone-50 border-stone-100">
                     {selectedSystemDetails.status === "Optimal" ? (
                       <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : selectedSystemDetails.status === "High Risk" ? (
+                      <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
                     ) : (
                       <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
                     )}
                     <div>
-                      <h4 className={`font-bold text-sm uppercase tracking-wider ${selectedSystemDetails.status === "Optimal" ? "text-emerald-700" : "text-amber-700"}`}>
-                        {selectedSystemDetails.status === "Optimal" ? "Perfect Match" : "Conditional Recommendation"}
+                      <h4 className={`font-bold text-sm uppercase tracking-wider ${
+                        selectedSystemDetails.status === "Optimal" ? "text-emerald-700" : 
+                        selectedSystemDetails.status === "High Risk" ? "text-red-700" :
+                        "text-amber-700"
+                      }`}>
+                        {selectedSystemDetails.status === "Optimal" ? "Perfect Match" : 
+                         selectedSystemDetails.status === "High Risk" ? "High Risk Configuration" :
+                         "Conditional Recommendation"}
                       </h4>
                       <p className="text-sm text-stone-600 mt-1">{selectedSystemDetails.advice}</p>
                       {selectedSystemDetails.status === "Conditional" && !showInteractiveBridge && (

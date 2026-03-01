@@ -1,4 +1,4 @@
-import { BATTERIES, INVERTERS, LOCATION_PSH, PANELS, SURGE_MULTIPLIERS } from "../constants";
+import { BATTERIES, INVERTERS, LOCATION_PSH, PANELS, SURGE_MULTIPLIERS, IRRADIANCE_PROFILES } from "../constants";
 import { Device, LoadAnalysis, Region, SystemCombination, Inverter, Panel, Battery, BatteryPreference } from "../types";
 
 export function calculateUserNeeds(devices: Device[]): LoadAnalysis {
@@ -59,12 +59,12 @@ export function simulateHourlySoC(
   actualDailyYield: number,
   usableBatteryWh: number,
   maxChargeW: number,
-  ccType: "pwm" | "mppt"
-): { passed: boolean; lowestSoCWh: number; finalDeficitWh: number } {
-  // Irradiance curve remains the same
-  const irradianceCurve: Record<number, number> = {
-    8: 0.03, 9: 0.09, 10: 0.15, 11: 0.20, 12: 0.23, 13: 0.18, 14: 0.09, 15: 0.03
-  };
+  ccType: "pwm" | "mppt",
+  location: Region
+): { passed: boolean; lowestSoCWh: number; finalDeficitWh: number; failureTime: string | null } {
+  // FETCH DYNAMIC REGIONAL CURVE
+  const irradianceCurve = IRRADIANCE_PROFILES[location];
+  
   const hourlySolarGen: Record<number, number> = {};
   for (let h = 0; h < 24; h++) {
     hourlySolarGen[h] = (irradianceCurve[h] || 0) * actualDailyYield;
@@ -105,16 +105,21 @@ export function simulateHourlySoC(
     }
 
     if (currentBatteryWh < 0) {
-      return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: Math.abs(currentBatteryWh) };
+      const amPm = h < 12 ? "AM" : "PM";
+      let displayHour = h % 12;
+      if (displayHour === 0) displayHour = 12;
+      const failureTime = `${displayHour}:00 ${amPm}`;
+
+      return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: Math.abs(currentBatteryWh), failureTime };
     }
   }
 
   // Check if battery recharged by end of next day (5 PM)
   if (currentBatteryWh < usableBatteryWh * 0.95) {
-    return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: usableBatteryWh - currentBatteryWh };
+    return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: usableBatteryWh - currentBatteryWh, failureTime: "Late Afternoon (Battery failed to recharge)" };
   }
 
-  return { passed: true, lowestSoCWh: lowestBatteryWh, finalDeficitWh: 0 };
+  return { passed: true, lowestSoCWh: lowestBatteryWh, finalDeficitWh: 0, failureTime: null };
 }
 
 export function getLoadSheddingAdvice(devices: Device[], deficit: number): string {
@@ -329,47 +334,50 @@ export function buildCombinations(
           dailyYield,
           totalUsableBatteryWh,
           maxChargeW,
-          ccType as "pwm" | "mppt"
+          ccType as "pwm" | "mppt",
+          location
         );
 
-        let status: "Optimal" | "Conditional" | null = null;
+        let status: "Optimal" | "Conditional" | "High Risk" | null = null;
         let advice = "";
-        const deficit = sim.finalDeficitWh;
+        const simDeficit = sim.finalDeficitWh;
+        const deficitPercentage = total_daily_wh > 0 ? (simDeficit / total_daily_wh) * 100 : 0;
 
         if (sim.passed) {
           status = "Optimal";
           advice = "Perfect match. Fully covers your scheduled daily energy needs based on hourly simulation.";
           panelLog.push(`✅ System passed 24-hour hourly stress test.`);
+        } else if (deficitPercentage <= 20) {
+          // ALLOWED: It failed, but it's close enough for the user to fix!
+          status = "Conditional";
+          const controllerWarning = ccType.toUpperCase();
+          advice = `⚠️ Blackout Risk: With this ${controllerWarning} setup, your battery will drain at ${sim.failureTime}. You are short by ${simDeficit.toFixed(0)}Wh. Use the sliders below to adjust your schedule and prevent this.`;
+          panelLog.push(`⚠️ System failed hourly simulation (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
         } else {
-          const deficitPercentage = total_daily_wh > 0 ? (deficit / total_daily_wh) * 100 : 0;
-          if (deficitPercentage <= 20) {
-            status = "Conditional";
-            advice = getLoadSheddingAdvice(devices, deficit);
-            panelLog.push(`⚠️ System failed hourly simulation (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
-          } else {
-            panelLog.push(`❌ Rejected: Hourly simulation failed with ${deficit.toFixed(0)}Wh deficit (>20% tolerance).`);
-          }
+          // REJECTED: System is way too small (deficit > 20%)
+          panelLog.push(`❌ Rejected: Hourly simulation failed with ${simDeficit.toFixed(0)}Wh deficit (${deficitPercentage.toFixed(0)}% > 20% tolerance).`);
+          allLogs.push(panelLog);
+          continue;
         }
 
-        if (status) {
-          const totalPanelPrice = panel.price * totalPanels;
-          const totalSystemPrice = inv.price + totalBatteryPrice + totalPanelPrice;
-          validSystems.push({
-            inverter: inv.name,
-            inverter_price: inv.price,
-            battery_config: `${totalBatteries}x ${bat.name} (${batteriesInSeries}S${parallelStrings}P)`,
-            battery_price: totalBatteryPrice,
-            panel_config: `${totalPanels}x ${panel.name}`,
-            panel_price: totalPanelPrice,
-            array_size_w: arrayWattsRaw,
-            total_price: totalSystemPrice,
-            daily_yield: dailyYield, // Show actual yield in UI
-            deficit,
-            status,
-            advice,
-            log: panelLog,
-          });
-        }
+        const totalPanelPrice = panel.price * totalPanels;
+        const totalSystemPrice = inv.price + totalBatteryPrice + totalPanelPrice;
+        
+        validSystems.push({
+          inverter: inv.name,
+          inverter_price: inv.price,
+          battery_config: `${totalBatteries}x ${bat.name} (${batteriesInSeries}S${parallelStrings}P)`,
+          battery_price: totalBatteryPrice,
+          panel_config: `${totalPanels}x ${panel.name}`,
+          panel_price: totalPanelPrice,
+          array_size_w: arrayWattsActual, // Showing the actual usable watts!
+          total_price: totalSystemPrice,
+          daily_yield: dailyYield,
+          deficit: Math.max(0, simDeficit), // Passes the exact deficit to the UI sliders!
+          status,
+          advice,
+          log: panelLog,
+        });
         allLogs.push(panelLog);
       }
     }

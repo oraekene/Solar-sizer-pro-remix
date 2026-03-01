@@ -6,6 +6,12 @@ export const LOCATION_PSH: Record<Region, number> = {
   North: 3.8,
 };
 
+export const IRRADIANCE_PROFILES: Record<Region, Record<number, number>> = {
+  SE_SS: { 8: 0.03, 9: 0.09, 10: 0.15, 11: 0.20, 12: 0.23, 13: 0.18, 14: 0.09, 15: 0.03 },
+  SW: { 8: 0.03, 9: 0.09, 10: 0.15, 11: 0.20, 12: 0.23, 13: 0.18, 14: 0.09, 15: 0.03 },
+  North: { 7: 0.02, 8: 0.05, 9: 0.10, 10: 0.15, 11: 0.18, 12: 0.20, 13: 0.15, 14: 0.10, 15: 0.05 },
+};
+
 export const SURGE_MULTIPLIERS: Record<DeviceCategory, number> = {
   compressor: 3.0,
   motor: 2.0,
