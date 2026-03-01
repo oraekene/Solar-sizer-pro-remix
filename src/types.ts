@@ -66,6 +66,7 @@ export interface SystemCombination {
   array_size_w: number;
   total_price: number;
   daily_yield: number;
+  deficit: number;
   status: "Optimal" | "Conditional";
   advice: string;
   log: string[];

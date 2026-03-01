@@ -31,6 +31,7 @@ import {
 import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
 import { INVERTERS as DEFAULT_INVERTERS, PANELS as DEFAULT_PANELS, BATTERIES as DEFAULT_BATTERIES } from "./constants";
+import InteractiveBridge from "./components/InteractiveBridge";
 
 const CATEGORIES: { value: DeviceCategory; label: string }[] = [
   { value: "compressor", label: "Compressor (Fridge/AC)" },
@@ -96,6 +97,8 @@ export default function App() {
   const [newRange, setNewRange] = useState({ start: 18, end: 23 });
   const [selectedSystemLog, setSelectedSystemLog] = useState<string[] | null>(null);
   const [selectedSystemDetails, setSelectedSystemDetails] = useState<SystemCombination | null>(null);
+  const [showInteractiveBridge, setShowInteractiveBridge] = useState(false);
+  const [adjustedLoad, setAdjustedLoad] = useState<{ devices: Device[], deficit: number } | null>(null);
 
   // Hardware Form State
   const [showAddHardware, setShowAddHardware] = useState<"inverter" | "panel" | "battery" | null>(null);
@@ -239,7 +242,17 @@ export default function App() {
     const date = new Date().toLocaleDateString();
     const quoteId = `QT-${Math.floor(100000 + Math.random() * 900000)}`;
     
-    const content = `
+    // Use adjusted advice if available
+    let finalAdvice = sys.advice;
+    if (adjustedLoad && sys.status === "Conditional") {
+      if (adjustedLoad.deficit === 0) {
+        finalAdvice = "Perfect Match (Lifestyle Adjusted): Your modified usage schedule now fits this system's capacity perfectly.";
+      } else {
+        finalAdvice = `Conditional (Lifestyle Adjusted): With your current adjustments, you still have a small deficit of ${adjustedLoad.deficit.toFixed(0)}Wh. Further minor cuts or grid support needed.`;
+      }
+    }
+
+    const quoteContent = `
 =========================================
           SOLARSIZER PRO QUOTE
 =========================================
@@ -250,7 +263,7 @@ Location: ${REGIONS.find(r => r.value === region)?.label}
 
 SYSTEM SPECIFICATIONS:
 - Status: ${sys.status}
-- Advice: ${sys.advice}
+- Advice: ${finalAdvice}
 - Inverter: ${sys.inverter}
 - Battery Bank: ${sys.battery_config}
 - Solar Array: ${sys.panel_config} (${sys.array_size_w}W)
@@ -276,15 +289,49 @@ This quote is valid for 14 days.
 =========================================
     `.trim();
 
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `SolarSizer_Quote_${quoteId}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const getHourLabel = (hour: number) => {
+      if (hour === 0 || hour === 24) return "12 AM";
+      if (hour === 12) return "12 PM";
+      return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+    };
+
+    const usageDevices = adjustedLoad?.devices || devices;
+    const usageContent = `
+=========================================
+          LOAD PROFILE & USAGE
+=========================================
+Quote ID: ${quoteId}
+Date: ${date}
+-----------------------------------------
+
+DEVICE SCHEDULE:
+${usageDevices.map(d => `
+- ${d.name} (${d.watts}W x ${d.qty})
+  Schedule: ${d.ranges.map(r => `${getHourLabel(r.start)} - ${getHourLabel(r.end)}`).join(", ")}
+`).join("")}
+
+-----------------------------------------
+ENERGY ANALYSIS:
+Original Daily Load: ${results?.analysis.total_daily_wh.toFixed(0)}Wh
+System Daily Yield: ${sys.daily_yield.toFixed(0)}Wh
+Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.deficit.toFixed(0)}Wh
+=========================================
+    `.trim();
+
+    const downloadFile = (content: string, filename: string) => {
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    };
+
+    downloadFile(quoteContent, `SolarSizer_Quote_${quoteId}.txt`);
+    downloadFile(usageContent, `SolarSizer_Usage_${quoteId}.txt`);
   };
 
   return (
@@ -1053,7 +1100,11 @@ This quote is valid for 14 days.
                   <h2 className="font-bold text-xl">System Configuration Details</h2>
                 </div>
                 <button 
-                  onClick={() => setSelectedSystemDetails(null)}
+                  onClick={() => { 
+                    setSelectedSystemDetails(null); 
+                    setShowInteractiveBridge(false); 
+                    setAdjustedLoad(null);
+                  }}
                   className="p-2 hover:bg-white/10 rounded-full transition-colors"
                 >
                   <X className="w-6 h-6" />
@@ -1073,9 +1124,29 @@ This quote is valid for 14 days.
                         {selectedSystemDetails.status === "Optimal" ? "Perfect Match" : "Conditional Recommendation"}
                       </h4>
                       <p className="text-sm text-stone-600 mt-1">{selectedSystemDetails.advice}</p>
+                      {selectedSystemDetails.status === "Conditional" && !showInteractiveBridge && (
+                        <button 
+                          onClick={() => setShowInteractiveBridge(true)}
+                          className="mt-3 px-4 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-all flex items-center gap-2"
+                        >
+                          <Activity className="w-3 h-3" /> Bridge the Gap Interactively
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="p-6 bg-stone-50 rounded-2xl border border-stone-100">
+
+                  {showInteractiveBridge && selectedSystemDetails.status === "Conditional" ? (
+                    <div className="md:col-span-3">
+                      <InteractiveBridge 
+                        devices={devices} 
+                        initialDeficit={selectedSystemDetails.deficit} 
+                        onClose={() => setShowInteractiveBridge(false)} 
+                        onChange={(adj, def) => setAdjustedLoad({ devices: adj, deficit: def })}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="p-6 bg-stone-50 rounded-2xl border border-stone-100">
                     <Cpu className="w-8 h-8 text-emerald-600 mb-4" />
                     <h3 className="font-bold text-lg mb-1">{selectedSystemDetails.inverter}</h3>
                     <p className="text-sm text-stone-500">Central Power Unit</p>
@@ -1105,7 +1176,9 @@ This quote is valid for 14 days.
                       <div className="flex justify-between pt-2 border-t border-stone-200"><span className="text-amber-600 font-bold">Price</span><span className="font-bold">₦{selectedSystemDetails.panel_price.toLocaleString()}</span></div>
                     </div>
                   </div>
-                </div>
+                </>
+              )}
+            </div>
 
                 <div className="space-y-4">
                   <h4 className="font-bold text-lg flex items-center gap-2">

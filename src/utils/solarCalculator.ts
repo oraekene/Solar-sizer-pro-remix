@@ -264,6 +264,7 @@ export function buildCombinations(
             array_size_w: arrayWatts,
             total_price: totalSystemPrice,
             daily_yield: dailyYield,
+            deficit,
             status,
             advice,
             log: panelLog,
