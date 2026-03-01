@@ -56,16 +56,12 @@ export function calculateUserNeeds(devices: Device[]): LoadAnalysis {
 
 export function simulateHourlySoC(
   hourlyLoad: Record<number, number>,
-  totalDailyYield: number,
+  actualDailyYield: number,
   usableBatteryWh: number,
   maxChargeW: number,
   ccType: "pwm" | "mppt"
 ): { passed: boolean; lowestSoCWh: number; finalDeficitWh: number } {
-  // 1. Apply Charge Controller Efficiency
-  const ccEfficiency = ccType === "mppt" ? 0.95 : 0.65;
-  const actualDailyYield = totalDailyYield * ccEfficiency;
-
-  // Generate the hour-by-hour solar curve
+  // Irradiance curve remains the same
   const irradianceCurve: Record<number, number> = {
     8: 0.03, 9: 0.09, 10: 0.15, 11: 0.20, 12: 0.23, 13: 0.18, 14: 0.09, 15: 0.03
   };
@@ -272,10 +268,29 @@ export function buildCombinations(
           continue;
         }
 
-        // --- THE FIX: Calculate MINIMUM panels needed ---
+        // --- NEW: Dynamic MPPT vs PWM Power Calculation ---
+        const ccType = (inv.cc_type || "pwm").toLowerCase();
+        let usableWattsPerPanel = 0;
+        let ccEfficiency = 0;
+
+        if (ccType === "mppt") {
+          ccEfficiency = 0.95;
+          usableWattsPerPanel = panel.watts * ccEfficiency;
+          panelLog.push(`Charge Controller: MPPT (Efficiency: 95%). Usable power per panel: ${usableWattsPerPanel.toFixed(1)}W.`);
+        } else {
+          // PWM Logic: Calculate nominal charging voltage (13.5V per 12V block)
+          const chargingVoltage = (inv.system_vdc / 12) * 13.5;
+          // PWM Usable Power = Battery Voltage x Panel Amps (Isc is a safe proxy for Imp in sizing)
+          usableWattsPerPanel = chargingVoltage * panel.isc;
+          ccEfficiency = usableWattsPerPanel / panel.watts;
+          panelLog.push(`Charge Controller: PWM. Panel voltage dragged to ${chargingVoltage}V. Usable power per panel: ${usableWattsPerPanel.toFixed(1)}W (Effective Efficiency: ${(ccEfficiency * 100).toFixed(1)}%).`);
+        }
+
+        // --- Calculate MINIMUM panels needed using physically accurate wattage ---
         // Formula: Required Array Watts = Daily_Wh / (PSH * System Efficiency)
+        // 0.8 is standard system loss (wiring, dust, etc.)
         const requiredArrayWatts = total_daily_wh / (psh * 0.8);
-        let minPanelsNeeded = Math.ceil(requiredArrayWatts / panel.watts);
+        let minPanelsNeeded = Math.ceil(requiredArrayWatts / usableWattsPerPanel);
 
         // Even if load is tiny (or 0), we need at least 1 panel to charge the battery
         if (minPanelsNeeded === 0) {
@@ -292,19 +307,18 @@ export function buildCombinations(
 
         // Use the MINIMUM required panels for the final setup!
         const totalPanels = minPanelsNeeded;
-        const arrayWatts = totalPanels * panel.watts;
+        const arrayWattsRaw = totalPanels * panel.watts; // What's on the roof
+        const arrayWattsActual = totalPanels * usableWattsPerPanel; // What actually makes it through
         
         // Calculate the actual daily yield of this right-sized array
-        const usableArrayWatts = Math.min(arrayWatts, inv.cc_max_pv_w);
-        if (arrayWatts > inv.cc_max_pv_w) {
-          panelLog.push(`Note: Array size (${arrayWatts}W) exceeds charge controller PV input (${inv.cc_max_pv_w}W). Clipping will occur.`);
+        // We cap the actual throughput by the CC's PV input limit
+        const usableArrayWatts = Math.min(arrayWattsActual, inv.cc_max_pv_w);
+        if (arrayWattsRaw > inv.cc_max_pv_w) {
+          panelLog.push(`Note: Array size (${arrayWattsRaw}W) exceeds charge controller PV input (${inv.cc_max_pv_w}W). Clipping will occur.`);
         }
 
-        const dailyYield = usableArrayWatts * psh; // Base daily yield before CC efficiency
-        const ccType = inv.cc_type || "pwm";
-        const ccEfficiency = ccType === "mppt" ? 0.95 : 0.65;
-        panelLog.push(`Charge Controller: ${ccType.toUpperCase()} (Efficiency: ${ccEfficiency * 100}%).`);
-        panelLog.push(`Adjusted Daily Yield: ${(dailyYield * ccEfficiency).toFixed(0)}Wh.`);
+        const dailyYield = usableArrayWatts * psh; 
+        panelLog.push(`Adjusted Daily Yield: ${dailyYield.toFixed(0)}Wh.`);
         
         // --- THE NEW HOURLY PHYSICS ENGINE ---
         const totalUsableBatteryWh = totalUsablePerString * parallelStrings;
@@ -315,7 +329,7 @@ export function buildCombinations(
           dailyYield,
           totalUsableBatteryWh,
           maxChargeW,
-          ccType
+          ccType as "pwm" | "mppt"
         );
 
         let status: "Optimal" | "Conditional" | null = null;
@@ -347,9 +361,9 @@ export function buildCombinations(
             battery_price: totalBatteryPrice,
             panel_config: `${totalPanels}x ${panel.name}`,
             panel_price: totalPanelPrice,
-            array_size_w: arrayWatts,
+            array_size_w: arrayWattsRaw,
             total_price: totalSystemPrice,
-            daily_yield: dailyYield * ((inv.cc_type || "pwm") === "mppt" ? 0.95 : 0.65), // Show actual yield in UI
+            daily_yield: dailyYield, // Show actual yield in UI
             deficit,
             status,
             advice,
