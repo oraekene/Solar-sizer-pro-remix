@@ -49,6 +49,58 @@ export function calculateUserNeeds(devices: Device[]): LoadAnalysis {
   return { max_surge: maxSurge, nighttime_wh: nighttimeWh, total_daily_wh: totalDailyWh };
 }
 
+export function getLoadSheddingAdvice(devices: Device[], deficit: number): string {
+  // Sort devices by hourly consumption (highest to lowest)
+  const sortedDevices = [...devices].sort((a, b) => (b.watts * b.qty) - (a.watts * a.qty));
+
+  let deficitRemaining = deficit;
+  const adviceSteps: string[] = [];
+
+  for (const d of sortedDevices) {
+    const hourlyWh = d.watts * d.qty;
+
+    // Calculate total run hours for this device
+    let totalRunHours = 0;
+    for (const range of d.ranges) {
+      if (range.end > range.start) {
+        totalRunHours += (range.end - range.start);
+      } else if (range.end < range.start) {
+        totalRunHours += (24 - range.start + range.end);
+      }
+    }
+
+    if (hourlyWh === 0 || totalRunHours <= 0) {
+      continue;
+    }
+
+    const hoursToCut = Math.ceil(deficitRemaining / hourlyWh);
+
+    // If we can cover the remaining deficit just by trimming this device:
+    if (hoursToCut <= totalRunHours) {
+      if (hoursToCut === totalRunHours) {
+        adviceSteps.push(`turn off the ${d.name} completely`);
+      } else {
+        adviceSteps.push(`run your ${d.name} for ${hoursToCut} hour(s) less`);
+      }
+
+      deficitRemaining = 0;
+      break; // We've covered the deficit!
+    }
+    // If this device isn't enough, we turn it off completely and keep going:
+    else {
+      adviceSteps.push(`turn off the ${d.name} completely`);
+      deficitRemaining -= (totalRunHours * hourlyWh);
+    }
+  }
+
+  // Format the final output
+  if (deficitRemaining <= 0) {
+    return `To bridge the ${deficit.toFixed(0)}Wh gap, ` + adviceSteps.join(" AND ") + ".";
+  } else {
+    return `Even after suggesting major cuts, you are still short. You must use grid power or upgrade the setup.`;
+  }
+}
+
 export function buildCombinations(
   location: Region,
   devices: Device[],
@@ -188,11 +240,12 @@ export function buildCombinations(
 
         if (deficit <= 0) {
           status = "Optimal";
-          advice = "Perfect match. Fully covers your daily energy needs.";
+          advice = "Perfect match. Fully covers your scheduled daily energy needs.";
           panelLog.push(`✅ System covers 100% of daily load.`);
         } else if (deficitPercentage <= 20) {
           status = "Conditional";
-          advice = `Slightly undersized (short by ${deficit.toFixed(0)}Wh). To make this work, reduce daytime usage by ${deficitPercentage.toFixed(0)}% or rely on grid power for a short top-up.`;
+          // Call our new smart advice function!
+          advice = getLoadSheddingAdvice(devices, deficit);
           panelLog.push(`⚠️ System is slightly undersized (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
         } else {
           panelLog.push(`❌ Rejected: Daily yield (${dailyYield.toFixed(0)}Wh) is less than required load (${total_daily_wh}Wh) by more than 20%.`);
