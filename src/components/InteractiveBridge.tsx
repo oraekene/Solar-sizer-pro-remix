@@ -24,9 +24,9 @@ export default function InteractiveBridge({ devices, initialDeficit, onClose, on
 
       const getHours = (ranges: TimeRange[]) => {
         return ranges.reduce((acc, r) => {
-          if (r.end > r.start) return acc + (r.end - r.start);
-          if (r.end < r.start) return acc + (24 - r.start + r.end);
-          return acc;
+          const start = r.start;
+          const end = r.end;
+          return acc + (end > start ? end - start : 24 - start + end);
         }, 0);
       };
 
@@ -51,7 +51,8 @@ export default function InteractiveBridge({ devices, initialDeficit, onClose, on
   };
 
   const getHourLabel = (hour: number) => {
-    if (hour === 0 || hour === 24) return "12 AM";
+    if (hour === 0) return "12 AM";
+    if (hour === 24) return "12 AM (Midnight)";
     if (hour === 12) return "12 PM";
     return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
   };

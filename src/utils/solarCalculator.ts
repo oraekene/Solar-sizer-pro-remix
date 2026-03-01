@@ -16,14 +16,18 @@ export function calculateUserNeeds(devices: Device[]): LoadAnalysis {
     const surgeDiff = surgeW - runW;
 
     for (const range of d.ranges) {
-      // Handle wrap-around hours (e.g., 20 to 6)
-      let h = range.start;
-      while (h !== range.end) {
+      const start = range.start;
+      const end = range.end;
+      
+      // Calculate duration correctly including wrap-around and 24h coverage
+      const duration = end > start ? end - start : 24 - start + end;
+
+      for (let i = 0; i < duration; i++) {
+        const h = (start + i) % 24;
         hourlyConsumption[h] += runW;
         if (surgeDiff > hourlySurge[h]) {
           hourlySurge[h] = surgeDiff;
         }
-        h = (h + 1) % 24;
       }
     }
   }
@@ -135,11 +139,9 @@ export function getLoadSheddingAdvice(devices: Device[], deficit: number): strin
     // Calculate total run hours for this device
     let totalRunHours = 0;
     for (const range of d.ranges) {
-      if (range.end > range.start) {
-        totalRunHours += (range.end - range.start);
-      } else if (range.end < range.start) {
-        totalRunHours += (24 - range.start + range.end);
-      }
+      const start = range.start;
+      const end = range.end;
+      totalRunHours += end > start ? end - start : 24 - start + end;
     }
 
     if (hourlyWh === 0 || totalRunHours <= 0) {

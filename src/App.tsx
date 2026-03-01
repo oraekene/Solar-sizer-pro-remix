@@ -48,7 +48,8 @@ const REGIONS: { value: Region; label: string }[] = [
 ];
 
 const getHourLabel = (hour: number) => {
-  if (hour === 0 || hour === 24) return "12 AM";
+  if (hour === 0) return "12 AM";
+  if (hour === 24) return "12 AM (Midnight)";
   if (hour === 12) return "12 PM";
   return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
 };
@@ -334,7 +335,8 @@ This quote is valid for 14 days.
     `.trim();
 
     const getHourLabel = (hour: number) => {
-      if (hour === 0 || hour === 24) return "12 AM";
+      if (hour === 0) return "12 AM";
+      if (hour === 24) return "12 AM (Midnight)";
       if (hour === 12) return "12 PM";
       return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
     };
