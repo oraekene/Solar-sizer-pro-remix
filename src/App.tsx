@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Sun, 
@@ -27,7 +27,8 @@ import {
   Save,
   FolderOpen,
   Copy,
-  Download
+  Download,
+  Upload
 } from "lucide-react";
 import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
@@ -170,6 +171,160 @@ export default function App() {
     setBatteryPreference(p.batteryPreference);
     setDevices([...p.devices]);
     setActiveTab("calculator");
+  };
+
+  const downloadFile = (content: string, fileName: string, contentType: string) => {
+    const a = document.createElement("a");
+    const file = new Blob([content], { type: contentType });
+    a.href = URL.createObjectURL(file);
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const exportResults = (results: { analysis: LoadAnalysis; systems: SystemCombination[] }) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const getHourLabel = (hour: number) => {
+      if (hour === 0) return "12 AM";
+      if (hour === 24) return "12 AM (Midnight)";
+      if (hour === 12) return "12 PM";
+      return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+    };
+
+    let content = `SOLARSIZER PRO - CALCULATION REPORT\n`;
+    content += `Generated: ${new Date().toLocaleString()}\n`;
+    content += `Region: ${REGIONS.find(r => r.value === region)?.label}\n`;
+    content += `------------------------------------------\n\n`;
+    
+    content += `LOAD PROFILE SUMMARY\n`;
+    content += `Peak Surge: ${results.analysis.max_surge}W\n`;
+    content += `Night Usage: ${results.analysis.nighttime_wh}Wh\n`;
+    content += `Daily Total: ${results.analysis.total_daily_wh}Wh\n\n`;
+
+    content += `DEVICES LIST\n`;
+    devices.forEach(d => {
+      content += `- ${d.name}: ${d.qty}x ${d.watts}W (${d.category})\n`;
+      content += `  Schedule: ${d.ranges.map(r => `${getHourLabel(r.start)} - ${getHourLabel(r.end)}`).join(", ")}\n`;
+    });
+    content += `\n`;
+
+    content += `RECOMMENDED SYSTEMS (${results.systems.length} found)\n`;
+    results.systems.forEach((sys, i) => {
+      content += `\n[System #${i + 1}] ${sys.status === "Optimal" ? "★ " : ""}${sys.inverter}\n`;
+      content += `  - Battery: ${sys.battery_config}\n`;
+      content += `  - Solar: ${sys.panel_config}\n`;
+      content += `  - Estimated Price: ₦${sys.total_price.toLocaleString()}\n`;
+    });
+
+    downloadFile(content, `SolarSizer_Report_${timestamp}.txt`, "text/plain");
+  };
+
+  const exportHardwareDatabaseJSON = () => {
+    const data = { inverters, panels, batteries };
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadFile(JSON.stringify(data, null, 2), `SolarSizer_Hardware_${timestamp}.json`, "application/json");
+  };
+
+  const importHardwareDatabase = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.inverters && data.panels && data.batteries) {
+          setInverters(data.inverters);
+          setPanels(data.panels);
+          setBatteries(data.batteries);
+          alert("Hardware database imported successfully!");
+        } else {
+          alert("Invalid hardware database file format.");
+        }
+      } catch (err) {
+        alert("Failed to parse the file. Please ensure it is a valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const exportProfilesJSON = () => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadFile(JSON.stringify(profiles, null, 2), `SolarSizer_Profiles_${timestamp}.json`, "application/json");
+  };
+
+  const importProfiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (Array.isArray(data)) {
+          setProfiles([...profiles, ...data]);
+          alert("Profiles imported successfully!");
+        } else {
+          alert("Invalid profiles file format.");
+        }
+      } catch (err) {
+        alert("Failed to parse the file. Please ensure it is a valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const exportFullLogs = () => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let content = `SOLARSIZER PRO - FULL CALCULATION LOGS\n`;
+    content += `Exported: ${new Date().toLocaleString()}\n`;
+    content += `------------------------------------------\n\n`;
+
+    internalLogs.forEach((log, i) => {
+      content += `LOG ATTEMPT #${i + 1} - ${new Date(log.timestamp).toLocaleString()}\n`;
+      content += `Region: ${log.location}\n`;
+      content += `Devices: ${log.devices.length}\n`;
+      content += `Analysis: Surge=${log.analysis.max_surge}W, Night=${log.analysis.nighttime_wh}Wh, Daily=${log.analysis.total_daily_wh}Wh\n`;
+      content += `Checked: ${log.totalCombinationsChecked}, Valid: ${log.validSystemsCount}\n`;
+      content += `--- LOG TRACE ---\n`;
+      log.allLogs.forEach(path => {
+        content += path.join("\n") + "\n---\n";
+      });
+      content += `\n==========================================\n\n`;
+    });
+
+    downloadFile(content, `SolarSizer_Full_Logs_${timestamp}.txt`, "text/plain");
+  };
+
+  const exportSingleLog = (log: CalculationAttempt) => {
+    const timestamp = new Date(log.timestamp).toISOString().replace(/[:.]/g, '-');
+    let content = `SOLARSIZER PRO - CALCULATION LOG ATTEMPT\n`;
+    content += `Timestamp: ${new Date(log.timestamp).toLocaleString()}\n`;
+    content += `Region: ${log.location}\n`;
+    content += `------------------------------------------\n\n`;
+    
+    content += `DEVICES LIST\n`;
+    log.devices.forEach(d => {
+      content += `- ${d.name}: ${d.qty}x ${d.watts}W\n`;
+    });
+    content += `\n`;
+
+    content += `ANALYSIS SUMMARY\n`;
+    content += `Peak Surge: ${log.analysis.max_surge}W\n`;
+    content += `Night Usage: ${log.analysis.nighttime_wh}Wh\n`;
+    content += `Daily Total: ${log.analysis.total_daily_wh}Wh\n\n`;
+
+    content += `CALCULATION STATS\n`;
+    content += `Total Combinations Checked: ${log.totalCombinationsChecked}\n`;
+    content += `Valid Systems Found: ${log.validSystemsCount}\n\n`;
+
+    content += `--- FULL LOG TRACE ---\n`;
+    log.allLogs.forEach((path, i) => {
+      content += `Path #${i + 1}:\n`;
+      content += path.join("\n") + "\n---\n";
+    });
+
+    downloadFile(content, `SolarSizer_Log_${timestamp}.txt`, "text/plain");
   };
 
   const deleteProfile = (id: string) => {
@@ -684,7 +839,15 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       <BatteryIcon className="w-6 h-6 text-emerald-600" />
                       Recommended Systems
                     </h2>
-                    <span className="text-sm text-stone-500">{results.systems.length} configurations found</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-stone-500">{results.systems.length} configurations found</span>
+                      <button 
+                        onClick={() => exportResults(results)}
+                        className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-100 transition-all border border-emerald-100"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Export Report
+                      </button>
+                    </div>
                   </div>
 
                   {results.systems.length === 0 ? (
@@ -809,11 +972,21 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <p className="text-stone-500">Manage the components used in calculations.</p>
               </div>
               <div className="flex gap-2">
+                <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
+                  <Upload className="w-4 h-4" /> Import JSON
+                  <input type="file" accept=".json" onChange={importHardwareDatabase} className="hidden" />
+                </label>
+                <button 
+                  onClick={exportHardwareDatabaseJSON}
+                  className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+                >
+                  <Download className="w-4 h-4" /> Export JSON
+                </button>
                 <button 
                   onClick={exportHardwareDatabase}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
                 >
-                  <Download className="w-4 h-4" /> Export Database
+                  <Download className="w-4 h-4" /> Export MD
                 </button>
                 <button onClick={() => setShowAddHardware("inverter")} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all">
                   <Plus className="w-4 h-4" /> Add Inverter
@@ -915,9 +1088,17 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
 
         {activeTab === "logs" && (
           <div className="space-y-8">
-            <div>
-              <h2 className="text-2xl font-bold">Internal Developer Logs</h2>
-              <p className="text-stone-500">Historical calculation attempts and internal logic traces.</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Internal Developer Logs</h2>
+                <p className="text-stone-500">Historical calculation attempts and internal logic traces.</p>
+              </div>
+              <button 
+                onClick={exportFullLogs}
+                className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+              >
+                <Download className="w-4 h-4" /> Export Full Logs
+              </button>
             </div>
 
             <div className="space-y-4">
@@ -939,9 +1120,18 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                           <p className="text-xs text-stone-500">{log.location} • {log.devices.length} devices</p>
                         </div>
                       </div>
-                      <div className="flex gap-4 text-xs font-bold uppercase tracking-wider">
-                        <div className="text-stone-400">Checked: <span className="text-stone-900">{log.totalCombinationsChecked}</span></div>
-                        <div className="text-emerald-500">Valid: <span className="text-emerald-600">{log.validSystemsCount}</span></div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex gap-4 text-xs font-bold uppercase tracking-wider">
+                          <div className="text-stone-400">Checked: <span className="text-stone-900">{log.totalCombinationsChecked}</span></div>
+                          <div className="text-emerald-500">Valid: <span className="text-emerald-600">{log.validSystemsCount}</span></div>
+                        </div>
+                        <button 
+                          onClick={() => exportSingleLog(log)}
+                          className="p-2 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Export this log"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                     
@@ -987,12 +1177,24 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <h2 className="text-2xl font-bold">Saved Profiles</h2>
                 <p className="text-stone-500">Quickly reuse your settings and load profiles.</p>
               </div>
-              <button 
-                onClick={() => setShowSaveProfile(true)}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all"
-              >
-                <Save className="w-4 h-4" /> Save Current as Profile
-              </button>
+              <div className="flex gap-2">
+                <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
+                  <Upload className="w-4 h-4" /> Import Profiles
+                  <input type="file" accept=".json" onChange={importProfiles} className="hidden" />
+                </label>
+                <button 
+                  onClick={exportProfilesJSON}
+                  className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+                >
+                  <Download className="w-4 h-4" /> Export Profiles
+                </button>
+                <button 
+                  onClick={() => setShowSaveProfile(true)}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all"
+                >
+                  <Save className="w-4 h-4" /> Save Current
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
