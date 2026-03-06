@@ -66,6 +66,12 @@ export default function App() {
   const [batteryPreference, setBatteryPreference] = useState<BatteryPreference>("any");
   const [devices, setDevices] = useState<Device[]>([]);
   
+  // Developer Access Check
+  const DEVELOPER_EMAIL = "oraelosikeny@gmail.com";
+  const DEVELOPER_EMAIL_ALT = "oraelosikenny@gmail.com"; // Handling the typo in runtime context
+  const currentUserEmail = (import.meta.env.VITE_USER_EMAIL || "").toLowerCase().trim();
+  const isDeveloper = currentUserEmail === DEVELOPER_EMAIL || currentUserEmail === DEVELOPER_EMAIL_ALT;
+  
   // Hardware State
   const [inverters, setInverters] = useState<Inverter[]>(() => {
     const saved = localStorage.getItem("ss_inverters");
@@ -233,13 +239,55 @@ export default function App() {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target?.result as string);
-        if (data.inverters && data.panels && data.batteries) {
-          setInverters(data.inverters);
-          setPanels(data.panels);
-          setBatteries(data.batteries);
-          alert("Hardware database imported successfully!");
+        let importedCount = 0;
+
+        if (data.inverters && Array.isArray(data.inverters)) {
+          const sanitizedInverters = data.inverters.map((inv: any) => ({
+            ...inv,
+            id: inv.id || crypto.randomUUID(),
+            max_ac_w: Number(inv.max_ac_w) || 0,
+            cc_max_pv_w: Number(inv.cc_max_pv_w) || 0,
+            cc_max_voc: Number(inv.cc_max_voc) || 0,
+            cc_max_amps: Number(inv.cc_max_amps) || 0,
+            system_vdc: Number(inv.system_vdc) || 0,
+            max_charge_amps: Number(inv.max_charge_amps) || 0,
+            cc_type: inv.cc_type === "mppt" ? "mppt" : "pwm",
+            price: Number(inv.price) || 0,
+          }));
+          setInverters(sanitizedInverters);
+          importedCount++;
+        }
+
+        if (data.panels && Array.isArray(data.panels)) {
+          const sanitizedPanels = data.panels.map((p: any) => ({
+            ...p,
+            id: p.id || crypto.randomUUID(),
+            watts: Number(p.watts) || 0,
+            voc: Number(p.voc) || 0,
+            isc: Number(p.isc) || 0,
+            price: Number(p.price) || 0,
+          }));
+          setPanels(sanitizedPanels);
+          importedCount++;
+        }
+
+        if (data.batteries && Array.isArray(data.batteries)) {
+          const sanitizedBatteries = data.batteries.map((b: any) => ({
+            ...b,
+            id: b.id || crypto.randomUUID(),
+            voltage: Number(b.voltage) || 0,
+            capacity_ah: Number(b.capacity_ah) || 0,
+            min_c_rate: Number(b.min_c_rate) || 0.1,
+            price: Number(b.price) || 0,
+          }));
+          setBatteries(sanitizedBatteries);
+          importedCount++;
+        }
+
+        if (importedCount > 0) {
+          alert("Hardware database updated successfully!");
         } else {
-          alert("Invalid hardware database file format.");
+          alert("Invalid hardware database file format. Please ensure it contains 'inverters', 'panels', or 'batteries' arrays.");
         }
       } catch (err) {
         alert("Failed to parse the file. Please ensure it is a valid JSON.");
@@ -566,12 +614,14 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             >
               <UserCircle className="w-4 h-4" /> Profiles
             </button>
-            <button 
-              onClick={() => setActiveTab("logs")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "logs" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
-            >
-              <Terminal className="w-4 h-4" /> Dev Logs
-            </button>
+            {isDeveloper && (
+              <button 
+                onClick={() => setActiveTab("logs")}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "logs" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
+              >
+                <Terminal className="w-4 h-4" /> Dev Logs
+              </button>
+            )}
           </nav>
 
           <div className="hidden md:flex items-center gap-6 text-sm font-medium text-stone-500">
@@ -1086,7 +1136,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
           </div>
         )}
 
-        {activeTab === "logs" && (
+        {activeTab === "logs" && isDeveloper && (
           <div className="space-y-8">
             <div className="flex items-center justify-between">
               <div>
