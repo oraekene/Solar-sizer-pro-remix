@@ -254,7 +254,18 @@ export default function App() {
             cc_type: inv.cc_type === "mppt" ? "mppt" : "pwm",
             price: Number(inv.price) || 0,
           }));
-          setInverters(sanitizedInverters);
+          setInverters(prev => {
+            const merged = [...prev];
+            sanitizedInverters.forEach(newItem => {
+              const index = merged.findIndex(item => item.id === newItem.id);
+              if (index !== -1) {
+                merged[index] = newItem;
+              } else {
+                merged.push(newItem);
+              }
+            });
+            return merged;
+          });
           importedCount++;
         }
 
@@ -267,7 +278,18 @@ export default function App() {
             isc: Number(p.isc) || 0,
             price: Number(p.price) || 0,
           }));
-          setPanels(sanitizedPanels);
+          setPanels(prev => {
+            const merged = [...prev];
+            sanitizedPanels.forEach(newItem => {
+              const index = merged.findIndex(item => item.id === newItem.id);
+              if (index !== -1) {
+                merged[index] = newItem;
+              } else {
+                merged.push(newItem);
+              }
+            });
+            return merged;
+          });
           importedCount++;
         }
 
@@ -280,7 +302,18 @@ export default function App() {
             min_c_rate: Number(b.min_c_rate) || 0.1,
             price: Number(b.price) || 0,
           }));
-          setBatteries(sanitizedBatteries);
+          setBatteries(prev => {
+            const merged = [...prev];
+            sanitizedBatteries.forEach(newItem => {
+              const index = merged.findIndex(item => item.id === newItem.id);
+              if (index !== -1) {
+                merged[index] = newItem;
+              } else {
+                merged.push(newItem);
+              }
+            });
+            return merged;
+          });
           importedCount++;
         }
 
