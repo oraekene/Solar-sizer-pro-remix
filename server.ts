@@ -95,7 +95,8 @@ async function startServer() {
     if (!GOOGLE_CLIENT_ID) {
       return res.status(500).json({ error: "Google Client ID not configured" });
     }
-    const redirectUri = `${APP_URL}/api/auth/google/callback`;
+    const origin = req.query.origin as string || APP_URL;
+    const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: redirectUri,
@@ -112,7 +113,8 @@ async function startServer() {
     if (!code) return res.status(400).send("No code provided");
 
     try {
-      const redirectUri = `${APP_URL}/api/auth/google/callback`;
+      const origin = `${req.protocol}://${req.get("host")}`;
+      const redirectUri = `${origin}/api/auth/google/callback`;
       const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
         code,
         client_id: GOOGLE_CLIENT_ID,

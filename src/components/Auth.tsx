@@ -18,6 +18,7 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
     try {
       const res = await fetch("/api/auth/user");
       const data = await res.json();
+      console.log("Fetched user:", data.user);
       setUser(data.user);
       onUserChange(data.user);
     } catch (err) {
@@ -46,7 +47,8 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
 
   const handleLogin = async () => {
     try {
-      const res = await fetch(`/api/auth/google/url`);
+      const origin = window.location.origin;
+      const res = await fetch(`/api/auth/google/url?origin=${encodeURIComponent(origin)}`);
       const { url } = await res.json();
       
       const width = 600;
@@ -141,6 +143,14 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
                 <p className="text-xs text-stone-500 truncate">{user.email}</p>
               </div>
               <div className="p-2">
+                <button
+                  onClick={() => { onTabChange("calculator"); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                >
+                  <Calculator className="w-4 h-4 text-stone-400" />
+                  <span>Calculator</span>
+                </button>
+                <div className="h-px bg-stone-100 my-1 mx-2" />
                 <button
                   onClick={() => { onTabChange("profiles"); setIsMenuOpen(false); }}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"

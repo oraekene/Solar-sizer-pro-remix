@@ -803,6 +803,36 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             >
               <Calculator className="w-4 h-4" /> Calculator
             </button>
+            {user && (
+              <>
+                <button 
+                  onClick={() => setActiveTab("profiles")}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "profiles" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
+                >
+                  <FolderOpen className="w-4 h-4" /> Profiles
+                </button>
+                <button 
+                  onClick={() => setActiveTab("results")}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "results" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
+                >
+                  <Save className="w-4 h-4" /> Results
+                </button>
+                <button 
+                  onClick={() => setActiveTab("database")}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "database" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
+                >
+                  <Database className="w-4 h-4" /> Hardware DB
+                </button>
+                {isDeveloper && (
+                  <button 
+                    onClick={() => setActiveTab("logs")}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "logs" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
+                  >
+                    <Terminal className="w-4 h-4" /> Logs
+                  </button>
+                )}
+              </>
+            )}
           </nav>
 
           <div className="flex items-center gap-4">
