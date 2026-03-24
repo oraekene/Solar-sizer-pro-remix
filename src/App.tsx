@@ -30,10 +30,11 @@ import {
   Download,
   Upload
 } from "lucide-react";
-import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile } from "./types";
+import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile, User } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
 import { INVERTERS as DEFAULT_INVERTERS, PANELS as DEFAULT_PANELS, BATTERIES as DEFAULT_BATTERIES } from "./constants";
 import InteractiveBridge from "./components/InteractiveBridge";
+import Auth from "./components/Auth";
 
 const CATEGORIES: { value: DeviceCategory; label: string }[] = [
   { value: "compressor", label: "Compressor (Fridge/AC)" },
@@ -65,12 +66,11 @@ export default function App() {
   const [region, setRegion] = useState<Region>("SE_SS");
   const [batteryPreference, setBatteryPreference] = useState<BatteryPreference>("any");
   const [devices, setDevices] = useState<Device[]>([]);
+  const [user, setUser] = useState<User | null>(null);
   
   // Developer Access Check
-  const DEVELOPER_EMAIL = "oraelosikeny@gmail.com";
-  const DEVELOPER_EMAIL_ALT = "oraelosikenny@gmail.com"; // Handling the typo in runtime context
-  const currentUserEmail = (import.meta.env.VITE_USER_EMAIL || "").toLowerCase().trim();
-  const isDeveloper = currentUserEmail === DEVELOPER_EMAIL || currentUserEmail === DEVELOPER_EMAIL_ALT;
+  const DEVELOPER_EMAILS = ["oraelosikeny@gmail.com", "oraelosikenny@gmail.com"];
+  const isDeveloper = user && DEVELOPER_EMAILS.includes(user.email.toLowerCase().trim());
   
   // Hardware State
   const [inverters, setInverters] = useState<Inverter[]>(() => {
@@ -657,13 +657,15 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             )}
           </nav>
 
-          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-stone-500">
+          <div className="hidden md:flex items-center gap-4 text-sm font-medium text-stone-500">
             <button 
               onClick={() => setShowSaveProfile(true)}
               className="bg-emerald-600 text-white px-4 py-2 rounded-full hover:bg-emerald-700 transition-colors flex items-center gap-2"
             >
               <Save className="w-4 h-4" /> Save Profile
             </button>
+            <div className="h-6 w-px bg-stone-200" />
+            <Auth onUserChange={setUser} />
           </div>
         </div>
       </header>

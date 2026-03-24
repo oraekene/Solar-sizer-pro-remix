@@ -93,4 +93,12 @@ export interface UserProfile {
   devices: Device[];
 }
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+  provider: "google" | "github";
+}
+
 export type AppTab = "calculator" | "database" | "logs" | "profiles";
