@@ -5,11 +5,57 @@ import cookieSession from "cookie-session";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import Database from "better-sqlite3";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// --- Database Setup ---
+const db = new Database("solar_sizer.db");
+db.pragma("foreign_keys = ON");
+
+// Create tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE,
+    name TEXT,
+    picture TEXT,
+    provider TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS profiles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT,
+    region TEXT,
+    battery_preference TEXT,
+    devices TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS results (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    profile_name TEXT,
+    system_data TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hardware (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    type TEXT, -- 'inverter', 'panel', 'battery'
+    data TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+`);
 
 async function startServer() {
   const app = express();
@@ -27,7 +73,7 @@ async function startServer() {
     })
   );
 
-  const APP_URL = process.env.APP_URL || "http://localhost:3000";
+  const APP_URL = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
 
   // --- OAuth Configuration ---
   const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -81,6 +127,17 @@ async function startServer() {
       });
 
       const userData = userResponse.data;
+      
+      // Upsert user in database
+      const upsertUser = db.prepare(`
+        INSERT INTO users (id, email, name, picture, provider)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          picture = excluded.picture
+      `);
+      upsertUser.run(userData.sub, userData.email, userData.name, userData.picture, "google");
+
       req.session!.user = {
         id: userData.sub,
         email: userData.email,
@@ -108,6 +165,89 @@ async function startServer() {
       console.error("Google Auth Error:", error.response?.data || error.message);
       res.status(500).send("Authentication failed");
     }
+  });
+
+  // --- User Data Routes ---
+
+  // Middleware to check auth
+  const requireAuth = (req: any, res: any, next: any) => {
+    if (!req.session?.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    next();
+  };
+
+  app.get("/api/user/data", requireAuth, (req, res) => {
+    const userId = req.session.user.id;
+    
+    const profiles = db.prepare("SELECT * FROM profiles WHERE user_id = ?").all(userId);
+    const results = db.prepare("SELECT * FROM results WHERE user_id = ?").all(userId);
+    const hardware = db.prepare("SELECT * FROM hardware WHERE user_id = ?").all(userId);
+
+    res.json({
+      profiles: profiles.map((p: any) => ({ ...p, devices: JSON.parse(p.devices) })),
+      results: results.map((r: any) => ({ ...r, system_data: JSON.parse(r.system_data) })),
+      hardware: hardware.map((h: any) => ({ ...h, ...JSON.parse(h.data) }))
+    });
+  });
+
+  app.post("/api/user/profiles", requireAuth, (req, res) => {
+    const userId = req.session.user.id;
+    const { id, name, region, battery_preference, devices } = req.body;
+
+    const upsert = db.prepare(`
+      INSERT INTO profiles (id, user_id, name, region, battery_preference, devices)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        region = excluded.region,
+        battery_preference = excluded.battery_preference,
+        devices = excluded.devices
+    `);
+    upsert.run(id, userId, name, region, battery_preference, JSON.stringify(devices));
+    res.json({ success: true });
+  });
+
+  app.post("/api/user/results", requireAuth, (req, res) => {
+    const userId = req.session.user.id;
+    const { id, profile_name, system_data } = req.body;
+
+    const insert = db.prepare(`
+      INSERT INTO results (id, user_id, profile_name, system_data)
+      VALUES (?, ?, ?, ?)
+    `);
+    insert.run(id, userId, profile_name, JSON.stringify(system_data));
+    res.json({ success: true });
+  });
+
+  app.post("/api/user/hardware", requireAuth, (req, res) => {
+    const userId = req.session.user.id;
+    const { id, type, ...data } = req.body;
+
+    const upsert = db.prepare(`
+      INSERT INTO hardware (id, user_id, type, data)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        data = excluded.data
+    `);
+    upsert.run(id, userId, type, JSON.stringify(data));
+    res.json({ success: true });
+  });
+
+  app.delete("/api/user/:type/:id", requireAuth, (req, res) => {
+    const userId = req.session.user.id;
+    const { type, id } = req.params;
+
+    let table = "";
+    if (type === "profile") table = "profiles";
+    else if (type === "result") table = "results";
+    else if (type === "hardware") table = "hardware";
+
+    if (!table) return res.status(400).json({ error: "Invalid type" });
+
+    const del = db.prepare(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`);
+    del.run(id, userId);
+    res.json({ success: true });
   });
 
   // --- Vite Middleware ---

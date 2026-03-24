@@ -98,7 +98,14 @@ export interface User {
   email: string;
   name: string;
   picture?: string;
-  provider: "google" | "github";
+  provider: "google";
 }
 
-export type AppTab = "calculator" | "database" | "logs" | "profiles";
+export interface SavedResult {
+  id: string;
+  profile_name: string;
+  system_data: SystemCombination;
+  created_at: string;
+}
+
+export type AppTab = "calculator" | "database" | "logs" | "profiles" | "results";

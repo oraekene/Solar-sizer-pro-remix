@@ -30,7 +30,7 @@ import {
   Download,
   Upload
 } from "lucide-react";
-import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile, User } from "./types";
+import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile, User, SavedResult } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
 import { INVERTERS as DEFAULT_INVERTERS, PANELS as DEFAULT_PANELS, BATTERIES as DEFAULT_BATTERIES } from "./constants";
 import InteractiveBridge from "./components/InteractiveBridge";
@@ -67,10 +67,69 @@ export default function App() {
   const [batteryPreference, setBatteryPreference] = useState<BatteryPreference>("any");
   const [devices, setDevices] = useState<Device[]>([]);
   const [user, setUser] = useState<User | null>(null);
+  const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
   
   // Developer Access Check
   const DEVELOPER_EMAILS = ["oraelosikeny@gmail.com", "oraelosikenny@gmail.com"];
   const isDeveloper = user && DEVELOPER_EMAILS.includes(user.email.toLowerCase().trim());
+
+  // Fetch user data from server when logged in
+  useEffect(() => {
+    if (user) {
+      fetch("/api/user/data")
+        .then(res => res.json())
+        .then(data => {
+          if (data.profiles?.length > 0) setProfiles(data.profiles);
+          if (data.results?.length > 0) setSavedResults(data.results);
+          
+          // Merge custom hardware
+          if (data.hardware?.length > 0) {
+            const customInverters = data.hardware.filter((h: any) => h.type === 'inverter');
+            const customPanels = data.hardware.filter((h: any) => h.type === 'panel');
+            const customBatteries = data.hardware.filter((h: any) => h.type === 'battery');
+
+            if (customInverters.length > 0) {
+              setInverters(prev => {
+                const merged = [...prev];
+                customInverters.forEach(item => {
+                  const idx = merged.findIndex(i => i.id === item.id);
+                  if (idx >= 0) merged[idx] = item;
+                  else merged.push(item);
+                });
+                return merged;
+              });
+            }
+            if (customPanels.length > 0) {
+              setPanels(prev => {
+                const merged = [...prev];
+                customPanels.forEach(item => {
+                  const idx = merged.findIndex(i => i.id === item.id);
+                  if (idx >= 0) merged[idx] = item;
+                  else merged.push(item);
+                });
+                return merged;
+              });
+            }
+            if (customBatteries.length > 0) {
+              setBatteries(prev => {
+                const merged = [...prev];
+                customBatteries.forEach(item => {
+                  const idx = merged.findIndex(i => i.id === item.id);
+                  if (idx >= 0) merged[idx] = item;
+                  else merged.push(item);
+                });
+                return merged;
+              });
+            }
+          }
+        })
+        .catch(err => console.error("Failed to fetch user data:", err));
+    } else {
+      // Reset to defaults or local storage when logged out
+      setProfiles(JSON.parse(localStorage.getItem("ss_profiles") || "[]"));
+      setSavedResults([]);
+    }
+  }, [user]);
   
   // Hardware State
   const [inverters, setInverters] = useState<Inverter[]>(() => {
@@ -112,6 +171,18 @@ export default function App() {
   const [selectedSystemDetails, setSelectedSystemDetails] = useState<SystemCombination | null>(null);
   const [showInteractiveBridge, setShowInteractiveBridge] = useState(false);
   const [adjustedLoad, setAdjustedLoad] = useState<{ devices: Device[], deficit: number } | null>(null);
+  const saveHardwareToServer = async (type: "inverter" | "panel" | "battery", item: any) => {
+    if (!user) return;
+    try {
+      await fetch("/api/user/hardware", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...item, type }),
+      });
+    } catch (err) {
+      console.error("Failed to save hardware:", err);
+    }
+  };
 
   // Hardware Form State
   const [showAddHardware, setShowAddHardware] = useState<"inverter" | "panel" | "battery" | null>(null);
@@ -157,7 +228,7 @@ export default function App() {
     localStorage.setItem("ss_profiles", JSON.stringify(profiles));
   }, [inverters, panels, batteries, profiles]);
 
-  const saveProfile = () => {
+  const saveProfile = async () => {
     if (!profileName.trim()) return;
     const newProfile: UserProfile = {
       id: crypto.randomUUID(),
@@ -167,9 +238,90 @@ export default function App() {
       batteryPreference,
       devices: [...devices],
     };
-    setProfiles([newProfile, ...profiles]);
+    const updated = [newProfile, ...profiles];
+    setProfiles(updated);
+    
+    if (user) {
+      try {
+        await fetch("/api/user/profiles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: newProfile.id,
+            name: newProfile.name,
+            region: newProfile.region,
+            battery_preference: newProfile.batteryPreference,
+            devices: newProfile.devices
+          })
+        });
+      } catch (err) {
+        console.error("Failed to save profile to server:", err);
+      }
+    } else {
+      localStorage.setItem("ss_profiles", JSON.stringify(updated));
+    }
+
     setProfileName("");
     setShowSaveProfile(false);
+  };
+
+  const deleteProfile = async (id: string) => {
+    const updated = profiles.filter((p) => p.id !== id);
+    setProfiles(updated);
+    
+    if (user) {
+      try {
+        await fetch(`/api/user/profile/${id}`, { method: "DELETE" });
+      } catch (err) {
+        console.error("Failed to delete profile from server:", err);
+      }
+    } else {
+      localStorage.setItem("ss_profiles", JSON.stringify(updated));
+    }
+  };
+
+  const saveResult = async (system: SystemCombination) => {
+    if (!user) {
+      alert("Please sign in to save results.");
+      return;
+    }
+
+    const name = prompt("Enter a name for this saved result:", `Result - ${new Date().toLocaleDateString()}`);
+    if (!name) return;
+
+    const newResult: SavedResult = {
+      id: crypto.randomUUID(),
+      profile_name: name,
+      system_data: system,
+      created_at: new Date().toISOString(),
+    };
+
+    setSavedResults(prev => [newResult, ...prev]);
+
+    try {
+      await fetch("/api/user/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newResult.id,
+          profile_name: newResult.profile_name,
+          system_data: newResult.system_data
+        })
+      });
+    } catch (err) {
+      console.error("Failed to save result to server:", err);
+    }
+  };
+
+  const deleteResult = async (id: string) => {
+    setSavedResults(prev => prev.filter(r => r.id !== id));
+    if (user) {
+      try {
+        await fetch(`/api/user/result/${id}`, { method: "DELETE" });
+      } catch (err) {
+        console.error("Failed to delete result from server:", err);
+      }
+    }
   };
 
   const loadProfile = (p: UserProfile) => {
@@ -266,6 +418,9 @@ export default function App() {
             });
             return merged;
           });
+          if (user) {
+            sanitizedInverters.forEach(inv => saveHardwareToServer("inverter", inv));
+          }
           importedCount++;
         }
 
@@ -290,6 +445,9 @@ export default function App() {
             });
             return merged;
           });
+          if (user) {
+            sanitizedPanels.forEach(p => saveHardwareToServer("panel", p));
+          }
           importedCount++;
         }
 
@@ -314,6 +472,9 @@ export default function App() {
             });
             return merged;
           });
+          if (user) {
+            sanitizedBatteries.forEach(b => saveHardwareToServer("battery", b));
+          }
           importedCount++;
         }
 
@@ -408,9 +569,6 @@ export default function App() {
     downloadFile(content, `SolarSizer_Log_${timestamp}.txt`, "text/plain");
   };
 
-  const deleteProfile = (id: string) => {
-    setProfiles(profiles.filter(p => p.id !== id));
-  };
 
   const exportHardwareDatabase = () => {
     const timestamp = new Date().toISOString().split('T')[0];
@@ -497,10 +655,18 @@ export default function App() {
     setDevices(devices.filter((d) => d.id !== id));
   };
 
-  const deleteHardware = (type: "inverter" | "panel" | "battery", id: string) => {
+  const deleteHardware = async (type: "inverter" | "panel" | "battery", id: string) => {
     if (type === "inverter") setInverters(inverters.filter(i => i.id !== id));
     if (type === "panel") setPanels(panels.filter(p => p.id !== id));
     if (type === "battery") setBatteries(batteries.filter(b => b.id !== id));
+    
+    if (user) {
+      try {
+        await fetch(`/api/user/hardware/${id}`, { method: "DELETE" });
+      } catch (err) {
+        console.error("Failed to delete hardware from server:", err);
+      }
+    }
   };
 
   const startEditing = (type: "inverter" | "panel" | "battery", item: any) => {
@@ -517,6 +683,8 @@ export default function App() {
     if (type === "inverter") setInverters([...inverters, newItem]);
     if (type === "panel") setPanels([...panels, newItem]);
     if (type === "battery") setBatteries([...batteries, newItem]);
+    
+    if (user) saveHardwareToServer(type, newItem);
   };
 
   const generateQuote = (sys: SystemCombination) => {
@@ -628,44 +796,28 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             <h1 className="text-xl font-bold tracking-tight">SolarSizer <span className="text-emerald-600">Pro</span></h1>
           </div>
           
-          <nav className="hidden md:flex items-center gap-1 p-1 bg-stone-100 rounded-xl">
+          <nav className="hidden md:flex items-center bg-stone-100 p-1 rounded-xl">
             <button 
               onClick={() => setActiveTab("calculator")}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "calculator" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
             >
               <Calculator className="w-4 h-4" /> Calculator
             </button>
-            <button 
-              onClick={() => setActiveTab("database")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "database" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
-            >
-              <Database className="w-4 h-4" /> Hardware
-            </button>
-            <button 
-              onClick={() => setActiveTab("profiles")}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "profiles" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
-            >
-              <UserCircle className="w-4 h-4" /> Profiles
-            </button>
-            {isDeveloper && (
-              <button 
-                onClick={() => setActiveTab("logs")}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "logs" ? "bg-white shadow-sm text-emerald-600" : "text-stone-500 hover:text-stone-900"}`}
-              >
-                <Terminal className="w-4 h-4" /> Dev Logs
-              </button>
-            )}
           </nav>
 
-          <div className="hidden md:flex items-center gap-4 text-sm font-medium text-stone-500">
+          <div className="flex items-center gap-4">
             <button 
               onClick={() => setShowSaveProfile(true)}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-full hover:bg-emerald-700 transition-colors flex items-center gap-2"
+              className="hidden md:flex bg-emerald-600 text-white px-4 py-2 rounded-full hover:bg-emerald-700 transition-colors items-center gap-2 text-sm font-medium"
             >
               <Save className="w-4 h-4" /> Save Profile
             </button>
-            <div className="h-6 w-px bg-stone-200" />
-            <Auth onUserChange={setUser} />
+            <div className="hidden md:block h-6 w-px bg-stone-200" />
+            <Auth 
+              onUserChange={setUser} 
+              onTabChange={setActiveTab}
+              isDeveloper={isDeveloper || false}
+            />
           </div>
         </div>
       </header>
@@ -1035,6 +1187,14 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                                 >
                                   View Details <ChevronRight className="w-4 h-4" />
                                 </button>
+                                {user && (
+                                  <button 
+                                    onClick={() => saveResult(sys)}
+                                    className="w-full md:w-auto px-6 py-2.5 bg-emerald-50 text-emerald-700 rounded-xl font-semibold hover:bg-emerald-100 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    <Save className="w-4 h-4" /> Save Result
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1336,6 +1496,75 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             </div>
           </div>
         )}
+        {activeTab === "results" && (
+          <div className="space-y-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Saved Results</h2>
+                <p className="text-stone-500">Access your previously saved system configurations.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {savedResults.length === 0 ? (
+                <div className="col-span-full text-center py-20 bg-white rounded-3xl border border-dashed border-stone-200">
+                  <Save className="w-12 h-12 text-stone-300 mx-auto mb-4" />
+                  <p className="text-stone-400">No saved results yet.</p>
+                </div>
+              ) : (
+                savedResults.map((r) => (
+                  <div key={r.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm hover:border-emerald-500 transition-all group">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-emerald-50 rounded-lg">
+                          <Zap className="w-5 h-5 text-emerald-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-lg">{r.profile_name}</h3>
+                          <p className="text-xs text-stone-400">{new Date(r.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => deleteResult(r.id)}
+                        className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 mb-6">
+                      <div className="flex items-center gap-2 text-xs text-stone-600">
+                        <Cpu className="w-3.5 h-3.5" />
+                        <span>{r.system_data.inverter}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-stone-600">
+                        <BatteryIcon className="w-3.5 h-3.5" />
+                        <span>{r.system_data.battery_config}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-stone-600">
+                        <Sun className="w-3.5 h-3.5" />
+                        <span>{r.system_data.panel_config}</span>
+                      </div>
+                      <div className="pt-2 border-t border-stone-100 flex justify-between items-center">
+                        <span className="text-xs font-bold text-stone-400">Total Price</span>
+                        <span className="text-sm font-black text-stone-900">₦{r.system_data.total_price.toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => {
+                        setSelectedSystemDetails(r.system_data);
+                      }}
+                      className="w-full py-2.5 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
+                    >
+                      View Details
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Save Profile Modal */}
@@ -1606,6 +1835,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     } else {
                       setInverters([...inverters, data]);
                     }
+                    if (user) saveHardwareToServer("inverter", data);
                   } else if (showAddHardware === "panel") {
                     const data: Panel = {
                       id: editingHardware?.id || crypto.randomUUID(),
@@ -1619,6 +1849,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     } else {
                       setPanels([...panels, data]);
                     }
+                    if (user) saveHardwareToServer("panel", data);
                   } else if (showAddHardware === "battery") {
                     const data: Battery = {
                       id: editingHardware?.id || crypto.randomUUID(),
@@ -1634,6 +1865,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     } else {
                       setBatteries([...batteries, data]);
                     }
+                    if (user) saveHardwareToServer("battery", data);
                   }
                   setShowAddHardware(null);
                   setEditingHardware(null);

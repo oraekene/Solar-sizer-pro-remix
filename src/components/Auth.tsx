@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { LogIn, Mail, LogOut, User as UserIcon, Loader2 } from "lucide-react";
-import { User } from "../types";
+import { LogIn, Mail, LogOut, User as UserIcon, Loader2, FolderOpen, Save, Settings, Database, Terminal } from "lucide-react";
+import { User, AppTab } from "../types";
 
 interface AuthProps {
   onUserChange: (user: User | null) => void;
+  onTabChange: (tab: AppTab) => void;
+  isDeveloper: boolean;
 }
 
-export default function Auth({ onUserChange }: AuthProps) {
+export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthProps) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -139,6 +141,42 @@ export default function Auth({ onUserChange }: AuthProps) {
                 <p className="text-xs text-stone-500 truncate">{user.email}</p>
               </div>
               <div className="p-2">
+                <button
+                  onClick={() => { onTabChange("profiles"); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                >
+                  <FolderOpen className="w-4 h-4 text-stone-400" />
+                  <span>My Profiles</span>
+                </button>
+                <button
+                  onClick={() => { onTabChange("results"); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                >
+                  <Save className="w-4 h-4 text-stone-400" />
+                  <span>Saved Results</span>
+                </button>
+                <button
+                  onClick={() => { onTabChange("database"); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                >
+                  <Database className="w-4 h-4 text-stone-400" />
+                  <span>Hardware DB</span>
+                </button>
+                
+                {isDeveloper && (
+                  <>
+                    <div className="h-px bg-stone-100 my-1 mx-2" />
+                    <button
+                      onClick={() => { onTabChange("logs"); setIsMenuOpen(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                    >
+                      <Terminal className="w-4 h-4 text-stone-400" />
+                      <span>Dev Logs</span>
+                    </button>
+                  </>
+                )}
+
+                <div className="h-px bg-stone-100 my-1 mx-2" />
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-xl transition-colors"
