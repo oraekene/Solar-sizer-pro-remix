@@ -194,6 +194,8 @@ export default function App() {
   const [selectedSystemDetails, setSelectedSystemDetails] = useState<SystemCombination | null>(null);
   const [showInteractiveBridge, setShowInteractiveBridge] = useState(false);
   const [adjustedLoad, setAdjustedLoad] = useState<{ devices: Device[], deficit: number } | null>(null);
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
+  const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const saveHardwareToServer = async (type: "inverter" | "panel" | "battery", item: any) => {
     if (!user) return;
     try {
@@ -253,16 +255,28 @@ export default function App() {
 
   const saveProfile = async () => {
     if (!profileName.trim()) return;
+    
+    const existingIndex = profiles.findIndex(p => p.id === currentProfileId || p.name === profileName);
+    
     const newProfile: UserProfile = {
-      id: crypto.randomUUID(),
+      id: existingIndex >= 0 ? profiles[existingIndex].id : crypto.randomUUID(),
       name: profileName,
       timestamp: new Date().toISOString(),
       region,
       batteryPreference,
       devices: [...devices],
     };
-    const updated = [newProfile, ...profiles];
+
+    let updated: UserProfile[];
+    if (existingIndex >= 0) {
+      updated = [...profiles];
+      updated[existingIndex] = newProfile;
+    } else {
+      updated = [newProfile, ...profiles];
+    }
+    
     setProfiles(updated);
+    setCurrentProfileId(newProfile.id);
     
     if (user) {
       try {
@@ -336,6 +350,43 @@ export default function App() {
     }
   };
 
+  const saveAllResults = async () => {
+    if (!user) {
+      alert("Please sign in to save results.");
+      return;
+    }
+    if (!results || results.systems.length === 0) return;
+
+    const prefix = prompt("Enter a prefix for these saved results:", `Analysis - ${new Date().toLocaleDateString()}`);
+    if (!prefix) return;
+
+    const newResults: SavedResult[] = results.systems.map((sys, idx) => ({
+      id: crypto.randomUUID(),
+      profile_name: `${prefix} (Option ${idx + 1})`,
+      system_data: sys,
+      created_at: new Date().toISOString(),
+    }));
+
+    setSavedResults(prev => [...newResults, ...prev]);
+
+    for (const res of newResults) {
+      try {
+        await fetch("/api/user/results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: res.id,
+            profile_name: res.profile_name,
+            system_data: res.system_data
+          })
+        });
+      } catch (err) {
+        console.error("Failed to save result to server:", err);
+      }
+    }
+    alert(`Successfully saved ${newResults.length} configurations.`);
+  };
+
   const deleteResult = async (id: string) => {
     setSavedResults(prev => prev.filter(r => r.id !== id));
     if (user) {
@@ -351,6 +402,7 @@ export default function App() {
     setRegion(p.region);
     setBatteryPreference(p.batteryPreference);
     setDevices([...p.devices]);
+    setCurrentProfileId(p.id);
     setActiveTab("calculator");
   };
 
@@ -398,6 +450,21 @@ export default function App() {
     });
 
     downloadFile(content, `SolarSizer_Report_${timestamp}.txt`, "text/plain");
+  };
+
+  const exportResultsJSON = (results: { analysis: LoadAnalysis; systems: SystemCombination[] }) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const data = {
+      metadata: {
+        generated: new Date().toISOString(),
+        region,
+        batteryPreference
+      },
+      analysis: results.analysis,
+      devices,
+      systems: results.systems
+    };
+    downloadFile(JSON.stringify(data, null, 2), `SolarSizer_Results_${timestamp}.json`, "application/json");
   };
 
   const exportHardwareDatabaseJSON = () => {
@@ -641,15 +708,28 @@ export default function App() {
       finalRanges.push({ ...newRange });
     }
 
-    const device: Device = {
-      id: crypto.randomUUID(),
-      name: newDevice.name || "Unnamed Device",
-      category: newDevice.category as DeviceCategory,
-      qty: newDevice.qty || 1,
-      watts: newDevice.watts || 0,
-      ranges: finalRanges,
-    };
-    setDevices([...devices, device]);
+    if (editingDeviceId) {
+      setDevices(devices.map(d => d.id === editingDeviceId ? {
+        ...d,
+        name: newDevice.name || "Unnamed Device",
+        category: newDevice.category as DeviceCategory,
+        qty: newDevice.qty || 1,
+        watts: newDevice.watts || 0,
+        ranges: finalRanges,
+      } : d));
+      setEditingDeviceId(null);
+    } else {
+      const device: Device = {
+        id: crypto.randomUUID(),
+        name: newDevice.name || "Unnamed Device",
+        category: newDevice.category as DeviceCategory,
+        qty: newDevice.qty || 1,
+        watts: newDevice.watts || 0,
+        ranges: finalRanges,
+      };
+      setDevices([...devices, device]);
+    }
+
     setNewDevice({
       name: "",
       category: "electronics",
@@ -658,6 +738,17 @@ export default function App() {
       ranges: [],
     });
     setNewRange({ start: 18, end: 23 });
+  };
+
+  const startEditingDevice = (device: Device) => {
+    setEditingDeviceId(device.id);
+    setNewDevice({
+      name: device.name,
+      category: device.category,
+      qty: device.qty,
+      watts: device.watts,
+      ranges: [...device.ranges],
+    });
   };
 
   const addRange = () => {
@@ -1026,10 +1117,22 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 </div>
                 <button 
                   onClick={addDevice}
-                  className="w-full py-3 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                  className={`w-full py-3 ${editingDeviceId ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'} text-white rounded-xl font-semibold transition-colors flex items-center justify-center gap-2 shadow-lg`}
                 >
-                  <Plus className="w-5 h-5" /> Add to Profile
+                  {editingDeviceId ? <Save className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                  {editingDeviceId ? "Update Device" : "Add to Profile"}
                 </button>
+                {editingDeviceId && (
+                  <button 
+                    onClick={() => {
+                      setEditingDeviceId(null);
+                      setNewDevice({ name: "", category: "electronics", qty: 1, watts: 0, ranges: [] });
+                    }}
+                    className="w-full py-2 text-stone-500 text-sm font-medium hover:text-stone-800 transition-colors"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
               </div>
 
               {/* Device List */}
@@ -1062,12 +1165,20 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                             </div>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => removeDevice(d.id)}
-                          className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => startEditingDevice(d)}
+                            className="p-2 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            <Settings className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => removeDevice(d.id)}
+                            className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </motion.div>
                     ))
                   )}
@@ -1131,12 +1242,28 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     </h2>
                     <div className="flex items-center gap-3">
                       <span className="text-sm text-stone-500">{results.systems.length} configurations found</span>
-                      <button 
-                        onClick={() => exportResults(results)}
-                        className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-100 transition-all border border-emerald-100"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Export Report
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => exportResults(results)}
+                          className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-100 transition-all border border-emerald-100"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Export Report
+                        </button>
+                        <button 
+                          onClick={() => exportResultsJSON(results)}
+                          className="bg-stone-100 text-stone-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Export JSON
+                        </button>
+                        {user && (
+                          <button 
+                            onClick={saveAllResults}
+                            className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
+                          >
+                            <Save className="w-3.5 h-3.5" /> Save All
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1269,17 +1396,22 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <h2 className="text-2xl font-bold">Hardware Database</h2>
                 <p className="text-stone-500">Manage the components used in calculations.</p>
               </div>
-              <div className="flex gap-2">
-                <Tooltip content={`{
-  "inverters": [{"name": "...", "max_ac_w": 5000, ...}],
-  "panels": [{"name": "...", "watts": 400, ...}],
-  "batteries": [{"name": "...", "voltage": 48, ...}]
-}`}>
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center gap-1">
                   <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
                     <Upload className="w-4 h-4" /> Import JSON
                     <input type="file" accept=".json" onChange={importHardwareDatabase} className="hidden" />
                   </label>
-                </Tooltip>
+                  <Tooltip content={`{
+  "inverters": [{"name": "...", "max_ac_w": 5000, ...}],
+  "panels": [{"name": "...", "watts": 400, ...}],
+  "batteries": [{"name": "...", "voltage": 48, ...}]
+}`}>
+                    <div className="w-5 h-5 bg-stone-200 rounded-full flex items-center justify-center cursor-help hover:bg-stone-300 transition-colors">
+                      <span className="text-[10px] font-bold">!</span>
+                    </div>
+                  </Tooltip>
+                </div>
                 <button 
                   onClick={exportHardwareDatabaseJSON}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
@@ -1481,19 +1613,24 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <h2 className="text-2xl font-bold">Saved Profiles</h2>
                 <p className="text-stone-500">Quickly reuse your settings and load profiles.</p>
               </div>
-              <div className="flex gap-2">
-                <Tooltip content={`[
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center gap-1">
+                  <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
+                    <Upload className="w-4 h-4" /> Import Profiles
+                    <input type="file" accept=".json" onChange={importProfiles} className="hidden" />
+                  </label>
+                  <Tooltip content={`[
   {
     "name": "My Home",
     "region": "SW",
     "devices": [{"name": "TV", "watts": 100, ...}]
   }
 ]`}>
-                  <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
-                    <Upload className="w-4 h-4" /> Import Profiles
-                    <input type="file" accept=".json" onChange={importProfiles} className="hidden" />
-                  </label>
-                </Tooltip>
+                    <div className="w-5 h-5 bg-stone-200 rounded-full flex items-center justify-center cursor-help hover:bg-stone-300 transition-colors">
+                      <span className="text-[10px] font-bold">!</span>
+                    </div>
+                  </Tooltip>
+                </div>
                 <button 
                   onClick={exportProfilesJSON}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
