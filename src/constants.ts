@@ -30,6 +30,7 @@ export const INVERTERS: Inverter[] = [
     system_vdc: 12,
     max_charge_amps: 50,
     cc_type: "pwm",
+    max_parallel_units: 1,
     price: 150000,
   },
   {
@@ -42,6 +43,7 @@ export const INVERTERS: Inverter[] = [
     system_vdc: 24,
     max_charge_amps: 60,
     cc_type: "mppt",
+    max_parallel_units: 6,
     price: 400000,
   },
   {
@@ -54,6 +56,7 @@ export const INVERTERS: Inverter[] = [
     system_vdc: 48,
     max_charge_amps: 120,
     cc_type: "mppt",
+    max_parallel_units: 16,
     price: 850000,
   },
 ];

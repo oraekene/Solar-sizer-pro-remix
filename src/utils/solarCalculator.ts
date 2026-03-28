@@ -79,10 +79,14 @@ export function simulateHourlySoC(
   let currentBatteryWh = usableBatteryWh;
   let lowestBatteryWh = usableBatteryWh;
 
-  // Loop from 18 to 23, then 0 to 17
-  const simulationHours = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  // Loop through 48 hours to find actual failure time for unsustainable systems
+  const simulationHours = [
+    18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+    18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
+  ];
 
-  for (const h of simulationHours) {
+  for (let i = 0; i < simulationHours.length; i++) {
+    const h = simulationHours[i];
     const load = hourlyLoad[h] || 0;
     const gen = hourlySolarGen[h] || 0;
 
@@ -112,15 +116,16 @@ export function simulateHourlySoC(
       const amPm = h < 12 ? "AM" : "PM";
       let displayHour = h % 12;
       if (displayHour === 0) displayHour = 12;
-      const failureTime = `${displayHour}:00 ${amPm}`;
+      const daySuffix = i >= 24 ? " (Day 2)" : "";
+      const failureTime = `${displayHour}:00 ${amPm}${daySuffix}`;
 
       return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: Math.abs(currentBatteryWh), failureTime };
     }
   }
 
-  // Check if battery recharged by end of next day (5 PM)
+  // Check if battery recharged by end of simulation (5 PM Day 2)
   if (currentBatteryWh < usableBatteryWh * 0.95) {
-    return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: usableBatteryWh - currentBatteryWh, failureTime: "Late Afternoon (Battery failed to recharge)" };
+    return { passed: false, lowestSoCWh: lowestBatteryWh, finalDeficitWh: usableBatteryWh - currentBatteryWh, failureTime: "5:00 PM (Insufficient Recharge)" };
   }
 
   return { passed: true, lowestSoCWh: lowestBatteryWh, finalDeficitWh: 0, failureTime: null };
@@ -190,17 +195,34 @@ export function buildCombinations(
   const allLogs: string[][] = [];
 
   for (const inv of hardware.inverters) {
-    const invLog: string[] = [];
-    invLog.push(`Checking inverter: ${inv.name} (Max AC: ${inv.max_ac_w}W)`);
+    const minUnitsForSurge = Math.ceil(max_surge / inv.max_ac_w);
     
-    if (inv.max_ac_w < max_surge) {
-      invLog.push(`❌ Rejected: Max AC output (${inv.max_ac_w}W) is less than peak surge (${max_surge}W).`);
+    if (minUnitsForSurge > inv.max_parallel_units) {
+      const invLog: string[] = [];
+      invLog.push(`Checking inverter: ${inv.name} (Max AC: ${inv.max_ac_w}W)`);
+      invLog.push(`❌ Rejected: Even with max parallel units (${inv.max_parallel_units}), total AC output (${inv.max_ac_w * inv.max_parallel_units}W) is less than peak surge (${max_surge}W).`);
       allLogs.push(invLog);
       continue;
     }
-    invLog.push(`✅ Inverter matches surge requirements.`);
 
-    for (const bat of hardware.batteries) {
+    // Try minimum units needed for surge, and optionally one more for extra charging/PV capacity
+    const unitsToTry = [minUnitsForSurge];
+    if (minUnitsForSurge + 1 <= inv.max_parallel_units) {
+      unitsToTry.push(minUnitsForSurge + 1);
+    }
+
+    for (const numUnits of unitsToTry) {
+      const invLog: string[] = [];
+      const totalMaxAcW = inv.max_ac_w * numUnits;
+      const totalMaxChargeAmps = inv.max_charge_amps * numUnits;
+      const totalMaxPvW = inv.cc_max_pv_w * numUnits;
+      const totalMaxCcAmps = inv.cc_max_amps * numUnits;
+      const inverterDisplayName = numUnits > 1 ? `${numUnits}x ${inv.name}` : inv.name;
+
+      invLog.push(`Checking setup: ${inverterDisplayName} (Total Max AC: ${totalMaxAcW}W)`);
+      invLog.push(`✅ Inverter setup matches surge requirements.`);
+
+      for (const bat of hardware.batteries) {
       const batLog = [...invLog];
       batLog.push(`Checking battery: ${bat.name} (${bat.voltage}V, ${bat.capacity_ah}Ah)`);
 
@@ -250,8 +272,8 @@ export function buildCombinations(
       const minChargeAmpsNeeded = totalAhBank * bat.min_c_rate;
       batLog.push(`Battery bank requires min ${minChargeAmpsNeeded.toFixed(1)}A charging current (C-Rate: ${bat.min_c_rate}).`);
 
-      if (inv.max_charge_amps < minChargeAmpsNeeded) {
-        batLog.push(`❌ Rejected: Inverter max charge current (${inv.max_charge_amps}A) is less than required (${minChargeAmpsNeeded.toFixed(1)}A).`);
+      if (totalMaxChargeAmps < minChargeAmpsNeeded) {
+        batLog.push(`❌ Rejected: Inverter setup max charge current (${totalMaxChargeAmps}A) is less than required (${minChargeAmpsNeeded.toFixed(1)}A).`);
         allLogs.push(batLog);
         continue;
       }
@@ -265,7 +287,7 @@ export function buildCombinations(
 
         // 1. Find the physical limits of the Inverter's Charge Controller
         const maxSeries = Math.floor(inv.cc_max_voc / panel.voc);
-        const maxParallel = Math.floor(inv.cc_max_amps / panel.isc);
+        const maxParallel = Math.floor(totalMaxCcAmps / panel.isc);
         const maxAllowedPanels = maxSeries * maxParallel;
         panelLog.push(`Charge controller limits: Max ${maxSeries} in series, Max ${maxParallel} in parallel (Total: ${maxAllowedPanels} panels).`);
 
@@ -319,9 +341,9 @@ export function buildCombinations(
         
         // Calculate the actual daily yield of this right-sized array
         // We cap the actual throughput by the CC's PV input limit
-        const usableArrayWatts = Math.min(arrayWattsActual, inv.cc_max_pv_w);
-        if (arrayWattsRaw > inv.cc_max_pv_w) {
-          panelLog.push(`Note: Array size (${arrayWattsRaw}W) exceeds charge controller PV input (${inv.cc_max_pv_w}W). Clipping will occur.`);
+        const usableArrayWatts = Math.min(arrayWattsActual, totalMaxPvW);
+        if (arrayWattsRaw > totalMaxPvW) {
+          panelLog.push(`Note: Array size (${arrayWattsRaw}W) exceeds charge controller PV input (${totalMaxPvW}W). Clipping will occur.`);
         }
 
         const dailyYield = usableArrayWatts * psh; 
@@ -329,7 +351,7 @@ export function buildCombinations(
         
         // --- THE NEW HOURLY PHYSICS ENGINE ---
         const totalUsableBatteryWh = totalUsablePerString * parallelStrings;
-        const maxChargeW = inv.max_charge_amps * inv.system_vdc;
+        const maxChargeW = totalMaxChargeAmps * inv.system_vdc;
         
         const sim = simulateHourlySoC(
           analysis.hourly_consumption,
@@ -364,11 +386,12 @@ export function buildCombinations(
         }
 
         const totalPanelPrice = panel.price * totalPanels;
-        const totalSystemPrice = inv.price + totalBatteryPrice + totalPanelPrice;
+        const totalInverterPrice = inv.price * numUnits;
+        const totalSystemPrice = totalInverterPrice + totalBatteryPrice + totalPanelPrice;
         
         validSystems.push({
-          inverter: inv.name,
-          inverter_price: inv.price,
+          inverter: inverterDisplayName,
+          inverter_price: totalInverterPrice,
           battery_config: `${totalBatteries}x ${bat.name} (${batteriesInSeries}S${parallelStrings}P)`,
           battery_price: totalBatteryPrice,
           panel_config: `${totalPanels}x ${panel.name}`,
@@ -385,6 +408,7 @@ export function buildCombinations(
       }
     }
   }
+}
 
   validSystems.sort((a, b) => a.total_price - b.total_price);
 

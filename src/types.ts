@@ -28,6 +28,7 @@ export interface Inverter {
   system_vdc: number;
   max_charge_amps: number;
   cc_type: "pwm" | "mppt";
+  max_parallel_units: number;
   price: number;
 }
 
