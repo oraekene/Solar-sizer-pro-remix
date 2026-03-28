@@ -67,6 +67,7 @@ export interface SystemCombination {
   panel_config: string;
   panel_price: number;
   array_size_w: number;
+  battery_total_wh: number;
   total_price: number;
   daily_yield: number;
   deficit: number;

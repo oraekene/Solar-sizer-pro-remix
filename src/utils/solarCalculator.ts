@@ -397,6 +397,7 @@ export function buildCombinations(
           panel_config: `${totalPanels}x ${panel.name}`,
           panel_price: totalPanelPrice,
           array_size_w: arrayWattsActual, // Showing the actual usable watts!
+          battery_total_wh: bat.voltage * bat.capacity_ah * totalBatteries,
           total_price: totalSystemPrice,
           daily_yield: dailyYield,
           deficit: Math.max(0, simDeficit), // Passes the exact deficit to the UI sliders!

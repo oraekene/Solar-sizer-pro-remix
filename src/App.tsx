@@ -29,7 +29,9 @@ import {
   FolderOpen,
   Copy,
   Download,
-  Upload
+  Upload,
+  Scale,
+  Columns
 } from "lucide-react";
 import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile, User, SavedResult } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
@@ -49,6 +51,191 @@ const REGIONS: { value: Region; label: string }[] = [
   { value: "SW", label: "South West" },
   { value: "North", label: "North" },
 ];
+
+const getSystemRecommendations = (sys: SystemCombination, allSystems: SystemCombination[]) => {
+  const recommendations = [];
+  const prices = allSystems.map(s => s.total_price);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+  
+  const maxBattery = Math.max(...allSystems.map(s => s.battery_total_wh));
+  const maxPanels = Math.max(...allSystems.map(s => s.array_size_w));
+
+  // Budget / Entry Level
+  if (sys.total_price === minPrice) {
+    recommendations.push("Student & Entry-Level: Most affordable entry into solar energy.");
+  } else if (sys.total_price < avgPrice * 0.8) {
+    recommendations.push("Budget Conscious: Great for small shops and provision stores.");
+  }
+
+  // Mid-Range / Professional
+  if (sys.total_price >= avgPrice * 0.9 && sys.total_price <= avgPrice * 1.1 && sys.status === 'Optimal') {
+    recommendations.push("Mid-Level Professional: Balanced reliability for home offices and managers.");
+  }
+
+  // High-End / Executive
+  if (sys.total_price > avgPrice * 1.3 || sys.total_price === maxPrice) {
+    recommendations.push("Executive & Senior Level: Premium capacity for large homes and high-load electronics.");
+  }
+
+  // Heavy Duty / Commercial
+  if (sys.battery_total_wh === maxBattery && sys.array_size_w === maxPanels) {
+    recommendations.push("Coldroom & Frozen Food: Maximum storage and generation for 24/7 commercial cooling.");
+  } else if (sys.battery_total_wh > maxBattery * 0.75) {
+    recommendations.push("Food Vendor & Home Cooling: High battery autonomy specifically for freezers and fridges.");
+  } else if (sys.array_size_w === maxPanels) {
+    recommendations.push("Daytime Business: Ideal for restaurants, bukkas, and busy offices.");
+  }
+
+  // Critical Infrastructure
+  if (sys.inverter.includes('Parallel') || (sys.battery_total_wh > maxBattery * 0.8 && sys.status === 'Optimal')) {
+    recommendations.push("Critical Infrastructure: Suitable for clinics, hospitals, and small data hubs.");
+  }
+
+  // Default
+  if (recommendations.length === 0) {
+    recommendations.push("Standard Residential: Reliable power for typical household needs.");
+  }
+  
+  return recommendations;
+};
+
+function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; onClose: () => void }) {
+  // Generator Baseline
+  const genFuelPrice = 1100; // NGN/L
+  const genConsumption = 0.7; // L/hr
+  const genMaintenance = 5000; // NGN/mo
+  const genInitialCost = 450000; // NGN for a decent 2.5kVA gen
+  
+  const monthlyGenFuel = genFuelPrice * genConsumption * 6 * 30; // 6 hours/day average
+  const monthlyGenTotal = monthlyGenFuel + genMaintenance;
+  const fiveYearGenTotal = genInitialCost + (monthlyGenTotal * 12 * 5);
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white w-full max-w-6xl max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
+      >
+        <div className="p-8 border-b border-stone-100 flex items-center justify-between bg-stone-50">
+          <div>
+            <h2 className="text-3xl font-black text-stone-900 flex items-center gap-3">
+              <Scale className="w-8 h-8 text-emerald-600" /> System Comparison
+            </h2>
+            <p className="text-stone-500 font-medium">Comparing {systems.length} Solar Setups vs. Generator Baseline</p>
+          </div>
+          <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-8">
+          <div className="min-w-[800px]">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-left p-4 bg-stone-50 rounded-tl-2xl border-b border-stone-200 text-xs font-bold uppercase tracking-widest text-stone-400">Feature</th>
+                  {systems.map((s, i) => (
+                    <th key={i} className="text-center p-4 bg-stone-50 border-b border-stone-200 text-sm font-black text-stone-900">
+                      Option {i + 1}
+                      <div className="text-[10px] font-bold text-emerald-600 uppercase mt-1">{s.inverter.split(' ')[0]}</div>
+                    </th>
+                  ))}
+                  <th className="text-center p-4 bg-red-50 border-b border-red-100 text-sm font-black text-red-900 rounded-tr-2xl">
+                    Generator
+                    <div className="text-[10px] font-bold text-red-600 uppercase mt-1">Baseline</div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-stone-50">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Initial Cost</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center font-black text-stone-900">₦{s.total_price.toLocaleString()}</td>
+                  ))}
+                  <td className="p-4 text-center font-black text-red-600">₦{genInitialCost.toLocaleString()}</td>
+                </tr>
+                <tr className="border-b border-stone-50 bg-stone-50/30">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Monthly Running Cost</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center font-medium text-emerald-600">₦0 <span className="text-[10px] opacity-60">(Free Sun)</span></td>
+                  ))}
+                  <td className="p-4 text-center font-black text-red-600">₦{monthlyGenTotal.toLocaleString()}</td>
+                </tr>
+                <tr className="border-b border-stone-50">
+                  <td className="p-4 font-bold text-stone-600 text-sm">5-Year Total Cost</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center font-black text-stone-900">₦{s.total_price.toLocaleString()}</td>
+                  ))}
+                  <td className="p-4 text-center font-black text-red-600">₦{fiveYearGenTotal.toLocaleString()}</td>
+                </tr>
+                <tr className="border-b border-stone-50 bg-stone-50/30">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Battery Capacity</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center text-sm font-medium">{s.battery_total_wh.toFixed(0)}Wh</td>
+                  ))}
+                  <td className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
+                </tr>
+                <tr className="border-b border-stone-50">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Solar Array</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center text-sm font-medium">{s.array_size_w}W</td>
+                  ))}
+                  <td className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
+                </tr>
+                <tr className="border-b border-stone-50 bg-stone-50/30">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Reliability</td>
+                  {systems.map((s, i) => (
+                    <td key={i} className="p-4 text-center text-xs font-medium text-emerald-600">Silent, Automatic</td>
+                  ))}
+                  <td className="p-4 text-center text-xs font-medium text-red-600">Noisy, Fumes, Manual Start</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
+              {systems.map((s, i) => (
+                <div key={i} className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
+                  <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">When Best to Use (Option {i+1})</h4>
+                  <ul className="space-y-3">
+                    {getSystemRecommendations(s, systems).map((rec, j) => (
+                      <li key={j} className="flex gap-2 text-sm text-stone-700 font-medium">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                        {rec}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <div className="bg-red-50 p-6 rounded-3xl border border-red-100">
+                <h4 className="text-xs font-black text-red-400 uppercase tracking-widest mb-4">When Best to Use (Generator)</h4>
+                <ul className="space-y-3">
+                  <li className="flex gap-2 text-sm text-red-700 font-medium">
+                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    Emergency backup for very short periods.
+                  </li>
+                  <li className="flex gap-2 text-sm text-red-700 font-medium">
+                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    When initial capital for solar is strictly unavailable.
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-8 bg-stone-50 border-t border-stone-100 text-center">
+          <p className="text-sm text-stone-500 font-medium">
+            Note: Generator costs are estimates based on ₦1,100/L fuel and 6 hours daily usage. 
+            Solar systems pay for themselves in approximately <span className="text-emerald-600 font-bold">{(systems[0].total_price / monthlyGenTotal).toFixed(1)} months</span>.
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 const getHourLabel = (hour: number) => {
   if (hour === 0) return "12 AM";
@@ -198,6 +385,38 @@ export default function App() {
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [selectedSavedAnalysis, setSelectedSavedAnalysis] = useState<SavedResult | null>(null);
+  const [selectedForComparison, setSelectedForComparison] = useState<SystemCombination[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const toggleComparison = (sys: SystemCombination) => {
+    const isSelected = selectedForComparison.some(s => 
+      s.inverter === sys.inverter && 
+      s.battery_config === sys.battery_config && 
+      s.panel_config === sys.panel_config
+    );
+
+    if (isSelected) {
+      setSelectedForComparison(prev => prev.filter(s => 
+        !(s.inverter === sys.inverter && 
+          s.battery_config === sys.battery_config && 
+          s.panel_config === sys.panel_config)
+      ));
+    } else {
+      if (selectedForComparison.length >= 4) {
+        alert("You can compare up to 4 systems at once.");
+        return;
+      }
+      setSelectedForComparison(prev => [...prev, sys]);
+    }
+  };
+
+  const isSelectedForComparison = (sys: SystemCombination) => {
+    return selectedForComparison.some(s => 
+      s.inverter === sys.inverter && 
+      s.battery_config === sys.battery_config && 
+      s.panel_config === sys.panel_config
+    );
+  };
+
   const saveHardwareToServer = async (type: "inverter" | "panel" | "battery", item: any) => {
     if (!user) return;
     try {
@@ -1289,7 +1508,9 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                           initial={{ opacity: 0, x: 20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: idx * 0.05 }}
-                          className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-emerald-500 transition-all group relative overflow-hidden"
+                          className={`bg-white p-6 rounded-2xl shadow-sm border transition-all group relative overflow-hidden ${
+                            isSelectedForComparison(sys) ? 'border-emerald-500 ring-2 ring-emerald-500/10' : 'border-stone-200 hover:border-emerald-500'
+                          }`}
                         >
                           {idx === 0 && (
                             <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-bl-xl">
@@ -1366,6 +1587,17 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                                 </button>
                                 <div className="flex gap-2">
                                   <button 
+                                    onClick={() => toggleComparison(sys)}
+                                    className={`p-2.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                                      isSelectedForComparison(sys)
+                                      ? 'bg-emerald-600 text-white shadow-md'
+                                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                                    }`}
+                                    title={isSelectedForComparison(sys) ? "Remove from comparison" : "Add to comparison"}
+                                  >
+                                    <Scale className="w-5 h-5" />
+                                  </button>
+                                  <button 
                                     onClick={() => setSelectedSystemDetails(sys)}
                                     className="flex-1 px-6 py-2.5 bg-stone-900 text-white rounded-xl font-semibold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
                                   >
@@ -1388,6 +1620,48 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       ))}
                     </div>
                   )}
+
+                  {/* Comparison Bar */}
+                  <AnimatePresence>
+                    {selectedForComparison.length > 0 && (
+                      <motion.div 
+                        initial={{ y: 100, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        exit={{ y: 100, opacity: 0 }}
+                        className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4"
+                      >
+                        <div className="bg-stone-900 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-stone-800">
+                          <div className="flex items-center gap-4">
+                            <div className="flex -space-x-2">
+                              {selectedForComparison.map((s, i) => (
+                                <div key={i} className="w-8 h-8 rounded-full bg-emerald-600 border-2 border-stone-900 flex items-center justify-center text-[10px] font-bold">
+                                  {i + 1}
+                                </div>
+                              ))}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold">{selectedForComparison.length} Systems Selected</p>
+                              <p className="text-[10px] text-stone-400 uppercase tracking-wider">Compare to Generator Baseline</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => setSelectedForComparison([])}
+                              className="px-4 py-2 text-xs font-bold text-stone-400 hover:text-white transition-colors"
+                            >
+                              Clear
+                            </button>
+                            <button 
+                              onClick={() => setShowComparison(true)}
+                              className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-emerald-900/20"
+                            >
+                              <Scale className="w-4 h-4" /> Compare Now
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </section>
               </motion.div>
             )}
@@ -2337,6 +2611,16 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Comparison Modal */}
+      <AnimatePresence>
+        {showComparison && (
+          <ComparisonModal 
+            systems={selectedForComparison} 
+            onClose={() => setShowComparison(false)} 
+          />
         )}
       </AnimatePresence>
     </div>
