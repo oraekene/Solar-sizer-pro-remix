@@ -95,8 +95,7 @@ async function startServer() {
     if (!GOOGLE_CLIENT_ID) {
       return res.status(500).json({ error: "Google Client ID not configured" });
     }
-    const origin = req.query.origin as string || APP_URL;
-    const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
+    const redirectUri = `${APP_URL}/api/auth/google/callback`; // ← use APP_URL directly
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: redirectUri,
