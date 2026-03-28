@@ -105,8 +105,12 @@ export interface User {
 export interface SavedResult {
   id: string;
   profile_name: string;
-  system_data: SystemCombination;
   created_at: string;
+  // For full analysis saves
+  analysis?: LoadAnalysis;
+  systems?: SystemCombination[];
+  // For individual system saves
+  system_data?: SystemCombination;
 }
 
 export type AppTab = "calculator" | "database" | "logs" | "profiles" | "results";
