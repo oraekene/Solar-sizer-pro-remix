@@ -56,23 +56,26 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
 `);
-
+//
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // ✅ Add this — tells Express to trust Render's reverse proxy
+  app.set('trust proxy', 1);
 
   app.use(express.json());
   app.use(
     cookieSession({
       name: "session",
       keys: [process.env.SESSION_SECRET || "solar-sizer-secret"],
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      maxAge: 24 * 60 * 60 * 1000,
       sameSite: "none",
       secure: true,
       httpOnly: true,
     })
   );
-
+  // ... rest of your code unchanged
   const APP_URL = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
 
   // --- OAuth Configuration ---
