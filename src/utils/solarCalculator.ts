@@ -356,10 +356,11 @@ export function buildCombinations(
           advice = `⚠️ Blackout Risk: With this ${controllerWarning} setup, your battery will drain at ${sim.failureTime}. You are short by ${simDeficit.toFixed(0)}Wh. Use the sliders below to adjust your schedule and prevent this.`;
           panelLog.push(`⚠️ System failed hourly simulation (${deficitPercentage.toFixed(0)}% deficit), but within tolerance.`);
         } else {
-          // REJECTED: System is way too small (deficit > 20%)
-          panelLog.push(`❌ Rejected: Hourly simulation failed with ${simDeficit.toFixed(0)}Wh deficit (${deficitPercentage.toFixed(0)}% > 20% tolerance).`);
-          allLogs.push(panelLog);
-          continue;
+          // PREVIOUSLY REJECTED, NOW INCLUDED AS HIGH RISK
+          status = "High Risk";
+          const controllerWarning = ccType.toUpperCase();
+          advice = `🚨 High Blackout Risk: Your battery will drain at ${sim.failureTime}. You are short by ${simDeficit.toFixed(0)}Wh (${deficitPercentage.toFixed(0)}%). This system is significantly undersized for your load.`;
+          panelLog.push(`🚨 System failed hourly simulation with high deficit (${deficitPercentage.toFixed(0)}%).`);
         }
 
         const totalPanelPrice = panel.price * totalPanels;

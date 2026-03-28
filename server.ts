@@ -56,26 +56,26 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
 `);
-//
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // ✅ Add this — tells Express to trust Render's reverse proxy
-  app.set('trust proxy', 1);
+  // Trust proxy is required for correct host/protocol detection in Cloud Run
+  app.set('trust proxy', true);
 
   app.use(express.json());
   app.use(
     cookieSession({
       name: "session",
       keys: [process.env.SESSION_SECRET || "solar-sizer-secret"],
-      maxAge: 24 * 60 * 60 * 1000,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
       sameSite: "none",
       secure: true,
       httpOnly: true,
     })
   );
-  // ... rest of your code unchanged
+
   const APP_URL = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
 
   // --- OAuth Configuration ---
@@ -98,7 +98,15 @@ async function startServer() {
     if (!GOOGLE_CLIENT_ID) {
       return res.status(500).json({ error: "Google Client ID not configured" });
     }
-    const redirectUri = `${APP_URL}/api/auth/google/callback`; // ← use APP_URL directly
+    const origin = req.query.origin as string || APP_URL;
+    const state = Buffer.from(JSON.stringify({ origin })).toString("base64");
+    
+    // The redirect URI must be exactly what's registered in Google Console
+    // We'll use the current host to match the request
+    const currentHost = req.get("host") || "";
+    const protocol = currentHost.includes("localhost") ? "http" : "https";
+    const redirectUri = `${protocol}://${currentHost}/api/auth/google/callback`;
+
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: redirectUri,
@@ -106,26 +114,42 @@ async function startServer() {
       scope: "openid email profile",
       access_type: "offline",
       prompt: "consent",
+      state: state,
     });
     res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
-      const { code } = req.query;
-      if (!code) return res.status(400).send("No code provided");
+    const { code, state } = req.query;
+    if (!code) return res.status(400).send("No code provided");
 
-      try {
-        // ✅ Use APP_URL directly — it's already set to the correct HTTPS URL in Render env
-        const redirectUri = `${APP_URL}/api/auth/google/callback`;
-      
-        const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
-          code,
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          redirect_uri: redirectUri,   // ← was reconstructed from req.protocol before
-          grant_type: "authorization_code",
-        });
-        
+    try {
+      let origin = APP_URL;
+      if (state) {
+        try {
+          const decodedState = JSON.parse(Buffer.from(state as string, "base64").toString());
+          if (decodedState.origin) origin = decodedState.origin;
+        } catch (e) {
+          console.error("Failed to parse state:", e);
+        }
+      }
+
+      const currentHost = req.get("host") || "";
+      const protocol = currentHost.includes("localhost") ? "http" : "https";
+      const redirectUri = `${protocol}://${currentHost}/api/auth/google/callback`;
+
+      const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }).catch(err => {
+        console.error("Google Token Exchange Error:", err.response?.data || err.message);
+        console.error("Sent Redirect URI:", redirectUri);
+        throw err;
+      });
+
       const { access_token } = tokenResponse.data;
       const userResponse = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${access_token}` },

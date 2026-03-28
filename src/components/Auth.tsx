@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { LogIn, Mail, LogOut, User as UserIcon, Loader2, FolderOpen, Save, Settings, Database, Terminal } from "lucide-react";
+import { LogIn, Mail, LogOut, User as UserIcon, Loader2, FolderOpen, Save, Settings, Database, Terminal, Calculator } from "lucide-react";
 import { User, AppTab } from "../types";
 
 interface AuthProps {
@@ -17,12 +17,15 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
   const fetchUser = async () => {
     try {
       const res = await fetch("/api/auth/user");
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data = await res.json();
       console.log("Fetched user:", data.user);
       setUser(data.user);
       onUserChange(data.user);
     } catch (err) {
       console.error("Failed to fetch user:", err);
+      setUser(null);
+      onUserChange(null);
     } finally {
       setLoading(false);
     }
@@ -33,11 +36,7 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
 
     const handleMessage = (event: MessageEvent) => {
       const origin = event.origin;
-      if (
-        !origin.endsWith(".run.app") &&
-        !origin.endsWith(".onrender.com") &&   // 👈 add this
-        !origin.includes("localhost")
-      ) {
+      if (!origin.endsWith(".run.app") && !origin.includes("localhost")) {
         return;
       }
       if (event.data?.type === "OAUTH_AUTH_SUCCESS") {
@@ -140,13 +139,14 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
-              className="absolute right-0 mt-2 w-56 bg-white border border-stone-200 rounded-2xl shadow-xl z-30 overflow-hidden"
+              className="fixed sm:absolute top-20 sm:top-auto right-4 sm:right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white border border-stone-200 rounded-2xl shadow-xl z-30 overflow-hidden flex flex-col"
+              style={{ maxHeight: "calc(100vh - 100px)" }}
             >
-              <div className="p-4 border-b border-stone-100 bg-stone-50/50">
-                <p className="text-sm font-bold text-stone-900">{user.name}</p>
-                <p className="text-xs text-stone-500 truncate">{user.email}</p>
+              <div className="p-4 border-b border-stone-100 bg-stone-50/50 flex-shrink-0">
+                <p className="text-sm font-bold text-stone-900 truncate">{user.name || "User"}</p>
+                <p className="text-xs text-stone-500 truncate">{user.email || ""}</p>
               </div>
-              <div className="p-2">
+              <div className="p-2 overflow-y-auto">
                 <button
                   onClick={() => { onTabChange("calculator"); setIsMenuOpen(false); }}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
@@ -190,6 +190,16 @@ export default function Auth({ onUserChange, onTabChange, isDeveloper }: AuthPro
                   </>
                 )}
 
+                <button
+                  onClick={() => { console.log("Settings are coming soon!"); setIsMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 rounded-xl transition-colors"
+                >
+                  <Settings className="w-4 h-4 text-stone-400" />
+                  <div className="flex items-center justify-between w-full">
+                    <span>Settings</span>
+                    <span className="text-[10px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded-md">Soon</span>
+                  </div>
+                </button>
                 <div className="h-px bg-stone-100 my-1 mx-2" />
                 <button
                   onClick={handleLogout}

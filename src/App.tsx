@@ -61,6 +61,29 @@ const HOUR_OPTIONS = Array.from({ length: 25 }, (_, i) => ({
   label: getHourLabel(i),
 }));
 
+function Tooltip({ content, children }: { content: string; children: React.ReactNode }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative flex items-center" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      {children}
+      <AnimatePresence>
+        {show && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 bg-stone-800 text-white text-[10px] rounded-xl shadow-xl z-50 pointer-events-none"
+          >
+            <div className="font-bold mb-1 border-b border-stone-700 pb-1">Example Format:</div>
+            <pre className="whitespace-pre-wrap font-mono opacity-80">{content}</pre>
+            <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-stone-800" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("calculator");
   const [region, setRegion] = useState<Region>("SE_SS");
@@ -1247,10 +1270,16 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <p className="text-stone-500">Manage the components used in calculations.</p>
               </div>
               <div className="flex gap-2">
-                <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
-                  <Upload className="w-4 h-4" /> Import JSON
-                  <input type="file" accept=".json" onChange={importHardwareDatabase} className="hidden" />
-                </label>
+                <Tooltip content={`{
+  "inverters": [{"name": "...", "max_ac_w": 5000, ...}],
+  "panels": [{"name": "...", "watts": 400, ...}],
+  "batteries": [{"name": "...", "voltage": 48, ...}]
+}`}>
+                  <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
+                    <Upload className="w-4 h-4" /> Import JSON
+                    <input type="file" accept=".json" onChange={importHardwareDatabase} className="hidden" />
+                  </label>
+                </Tooltip>
                 <button 
                   onClick={exportHardwareDatabaseJSON}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
@@ -1453,10 +1482,18 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                 <p className="text-stone-500">Quickly reuse your settings and load profiles.</p>
               </div>
               <div className="flex gap-2">
-                <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
-                  <Upload className="w-4 h-4" /> Import Profiles
-                  <input type="file" accept=".json" onChange={importProfiles} className="hidden" />
-                </label>
+                <Tooltip content={`[
+  {
+    "name": "My Home",
+    "region": "SW",
+    "devices": [{"name": "TV", "watts": 100, ...}]
+  }
+]`}>
+                  <label className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200 cursor-pointer">
+                    <Upload className="w-4 h-4" /> Import Profiles
+                    <input type="file" accept=".json" onChange={importProfiles} className="hidden" />
+                  </label>
+                </Tooltip>
                 <button 
                   onClick={exportProfilesJSON}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
