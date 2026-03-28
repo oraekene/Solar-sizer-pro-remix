@@ -109,20 +109,21 @@ async function startServer() {
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
-    const { code } = req.query;
-    if (!code) return res.status(400).send("No code provided");
+      const { code } = req.query;
+      if (!code) return res.status(400).send("No code provided");
 
-    try {
-      const origin = `${req.protocol}://${req.get("host")}`;
-      const redirectUri = `${origin}/api/auth/google/callback`;
-      const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
-        code,
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      });
-
+      try {
+        // ✅ Use APP_URL directly — it's already set to the correct HTTPS URL in Render env
+        const redirectUri = `${APP_URL}/api/auth/google/callback`;
+      
+        const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
+          code,
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          redirect_uri: redirectUri,   // ← was reconstructed from req.protocol before
+          grant_type: "authorization_code",
+        });
+        
       const { access_token } = tokenResponse.data;
       const userResponse = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${access_token}` },
