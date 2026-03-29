@@ -112,6 +112,9 @@ export interface SavedResult {
   systems?: SystemCombination[];
   // For individual system saves
   system_data?: SystemCombination;
+  // For comparison saves
+  is_comparison?: boolean;
+  has_generator?: boolean;
 }
 
 export type AppTab = "calculator" | "database" | "logs" | "profiles" | "results";

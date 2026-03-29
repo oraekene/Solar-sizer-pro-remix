@@ -119,7 +119,7 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     fuel_consumption_l_hr: 0.4,
     price: 85000,
     maintenance_mo: 3000,
-    lifespan_mo: 24,
+    lifespan_mo: 60, // 5 years
   },
   {
     name: "Standard Petrol (Medium)",
@@ -128,7 +128,7 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     fuel_consumption_l_hr: 0.8,
     price: 280000,
     maintenance_mo: 5000,
-    lifespan_mo: 36,
+    lifespan_mo: 96, // 8 years
   },
   {
     name: "Large Petrol",
@@ -137,7 +137,7 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     fuel_consumption_l_hr: 1.5,
     price: 550000,
     maintenance_mo: 8000,
-    lifespan_mo: 48,
+    lifespan_mo: 120, // 10 years
   },
   {
     name: "Small Diesel",
@@ -146,7 +146,7 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     fuel_consumption_l_hr: 2.0,
     price: 2500000,
     maintenance_mo: 25000,
-    lifespan_mo: 60,
+    lifespan_mo: 180, // 15 years
   },
   {
     name: "Large Diesel",
@@ -155,7 +155,7 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     fuel_consumption_l_hr: 4.5,
     price: 6500000,
     maintenance_mo: 50000,
-    lifespan_mo: 120,
+    lifespan_mo: 240, // 20 years
   }
 ];
 
@@ -167,16 +167,25 @@ const FUEL_PRICES = {
 function ComparisonModal({ 
   systems, 
   analysis, 
-  hasGenerator, 
-  setHasGenerator, 
+  hasGenerator: initialHasGenerator, 
+  setHasGenerator: onHasGeneratorChange, 
+  onSave,
   onClose 
 }: { 
   systems: SystemCombination[]; 
   analysis: LoadAnalysis;
   hasGenerator: boolean;
   setHasGenerator: (val: boolean) => void;
+  onSave?: () => void;
   onClose: () => void 
 }) {
+  const [hasGenerator, setHasGenerator] = useState(initialHasGenerator);
+
+  // Sync with parent if needed (for live comparisons)
+  useEffect(() => {
+    onHasGeneratorChange(hasGenerator);
+  }, [hasGenerator, onHasGeneratorChange]);
+
   // Generator Selection Logic
   const peakWatts = analysis.max_surge;
   const requiredVA = peakWatts / 0.8; // Assuming 0.8 power factor for generators
@@ -217,6 +226,14 @@ function ComparisonModal({
                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${hasGenerator ? 'left-7' : 'left-1'}`} />
               </button>
             </div>
+            {onSave && (
+              <button 
+                onClick={onSave}
+                className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+              >
+                <Save className="w-5 h-5" /> Save Comparison
+              </button>
+            )}
             <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
               <X className="w-6 h-6" />
             </button>
@@ -272,15 +289,14 @@ function ComparisonModal({
                 <tr className="border-b border-stone-50 bg-stone-50/30">
                   <td className="p-4 font-bold text-stone-600 text-sm">Amortized Monthly Cost</td>
                   {systems.map((s, i) => {
-                    const paybackMonths = s.total_price / monthlyTotal;
-                    const amortizedPayback = s.total_price / paybackMonths;
-                    const amortizedLifespan = s.total_price / 120; // 10 years
+                    const amortized25yr = s.total_price / 300; // 25 years
+                    const amortized10yr = s.total_price / 120; // 10 years (conservative)
                     return (
                       <td key={i} className="p-4 text-center">
-                        <div className="font-black text-stone-900 text-sm">₦{amortizedLifespan.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                        <div className="text-[10px] text-stone-400 font-bold uppercase">10yr Lifespan</div>
-                        <div className="mt-1 font-bold text-emerald-600 text-xs">₦{amortizedPayback.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                        <div className="text-[9px] text-emerald-500/70 font-bold uppercase">Till Payback</div>
+                        <div className="font-black text-emerald-600 text-sm">₦{amortized25yr.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className="text-[10px] text-emerald-500 font-bold uppercase">25yr Standard</div>
+                        <div className="mt-1 font-bold text-stone-900 text-xs">₦{amortized10yr.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className="text-[9px] text-stone-400 font-bold uppercase">10yr Conservative</div>
                       </td>
                     );
                   })}
@@ -507,6 +523,7 @@ export default function App() {
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [selectedSavedAnalysis, setSelectedSavedAnalysis] = useState<SavedResult | null>(null);
+  const [selectedSavedComparison, setSelectedSavedComparison] = useState<SavedResult | null>(null);
   const [hasGenerator, setHasGenerator] = useState(() => {
     return localStorage.getItem("ss_has_generator") === "true";
   });
@@ -737,6 +754,47 @@ export default function App() {
       console.error("Failed to save analysis to server:", err);
     }
     alert("Analysis saved successfully.");
+  };
+  
+  const saveComparison = async () => {
+    if (!user) {
+      alert("Please sign in to save comparisons.");
+      return;
+    }
+    if (selectedForComparison.length === 0 || !results) return;
+
+    const name = prompt("Enter a name for this comparison:", `Comparison - ${new Date().toLocaleDateString()}`);
+    if (!name) return;
+
+    const newResult: SavedResult = {
+      id: crypto.randomUUID(),
+      profile_name: name,
+      analysis: results.analysis,
+      systems: selectedForComparison,
+      is_comparison: true,
+      has_generator: hasGenerator,
+      created_at: new Date().toISOString(),
+    };
+
+    setSavedResults(prev => [newResult, ...prev]);
+
+    try {
+      await fetch("/api/user/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newResult.id,
+          profile_name: newResult.profile_name,
+          analysis: newResult.analysis,
+          systems: newResult.systems,
+          is_comparison: true,
+          has_generator: newResult.has_generator
+        })
+      });
+    } catch (err) {
+      console.error("Failed to save comparison to server:", err);
+    }
+    alert("Comparison saved successfully.");
   };
 
   const deleteResult = async (id: string) => {
@@ -1260,7 +1318,17 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
             analysis={results.analysis}
             hasGenerator={hasGenerator}
             setHasGenerator={setHasGenerator}
+            onSave={saveComparison}
             onClose={() => setShowComparison(false)} 
+          />
+        )}
+        {selectedSavedComparison && (
+          <ComparisonModal 
+            systems={selectedSavedComparison.systems!} 
+            analysis={selectedSavedComparison.analysis!}
+            hasGenerator={selectedSavedComparison.has_generator || false}
+            setHasGenerator={() => {}} 
+            onClose={() => setSelectedSavedComparison(null)} 
           />
         )}
       </AnimatePresence>
@@ -2150,13 +2218,14 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                   </div>
                 ) : (
                   savedResults.map((r) => {
-                    const isAnalysis = !!r.systems;
+                    const isAnalysis = !!r.systems && !r.is_comparison;
+                    const isComparison = !!r.is_comparison;
                     return (
                       <div key={r.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm hover:border-emerald-500 transition-all group">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-3">
                             <div className="p-2 bg-emerald-50 rounded-lg">
-                              {isAnalysis ? <LayoutGrid className="w-5 h-5 text-emerald-600" /> : <Zap className="w-5 h-5 text-emerald-600" />}
+                              {isComparison ? <Scale className="w-5 h-5 text-emerald-600" /> : isAnalysis ? <LayoutGrid className="w-5 h-5 text-emerald-600" /> : <Zap className="w-5 h-5 text-emerald-600" />}
                             </div>
                             <div>
                               <h3 className="font-bold text-lg">{r.profile_name}</h3>
@@ -2171,7 +2240,22 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                           </button>
                         </div>
 
-                        {isAnalysis ? (
+                        {isComparison ? (
+                          <div className="space-y-3 mb-6">
+                            <div className="flex items-center gap-2 text-xs text-stone-600 font-medium">
+                              <Scale className="w-3.5 h-3.5" />
+                              <span>Comparison of {r.systems?.length || 0} Systems</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-stone-600">
+                              <Zap className="w-3.5 h-3.5" />
+                              <span>{r.analysis?.max_surge.toFixed(0)}W Peak Surge</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-stone-600">
+                              <Info className="w-3.5 h-3.5" />
+                              <span>{r.has_generator ? "Owned Generator" : "New Generator"}</span>
+                            </div>
+                          </div>
+                        ) : isAnalysis ? (
                           <div className="space-y-3 mb-6">
                             <div className="flex items-center gap-2 text-xs text-stone-600 font-medium">
                               <Layers className="w-3.5 h-3.5" />
@@ -2208,10 +2292,14 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                         )}
 
                         <button 
-                          onClick={() => isAnalysis ? setSelectedSavedAnalysis(r) : setSelectedSystemDetails(r.system_data!)}
+                          onClick={() => {
+                            if (isComparison) setSelectedSavedComparison(r);
+                            else if (isAnalysis) setSelectedSavedAnalysis(r);
+                            else setSelectedSystemDetails(r.system_data!);
+                          }}
                           className="w-full py-2.5 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
                         >
-                          {isAnalysis ? "Open Analysis" : "View Details"}
+                          {isComparison ? "Open Comparison" : isAnalysis ? "Open Analysis" : "View Details"}
                         </button>
                       </div>
                     );
