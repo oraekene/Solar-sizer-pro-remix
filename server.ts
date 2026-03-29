@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -13,49 +14,62 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- Database Setup ---
-const db = new Database("solar_sizer.db");
-db.pragma("foreign_keys = ON");
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const useSupabase = !!(SUPABASE_URL && SUPABASE_KEY);
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE,
-    name TEXT,
-    picture TEXT,
-    provider TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+let db: any;
+let supabase: any;
 
-  CREATE TABLE IF NOT EXISTS profiles (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    name TEXT,
-    region TEXT,
-    battery_preference TEXT,
-    devices TEXT, -- JSON string
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
+if (useSupabase) {
+  console.log("Using Supabase as backend database.");
+  supabase = createClient(SUPABASE_URL!, SUPABASE_KEY!);
+} else {
+  console.log("Using local SQLite as backend database. Note: Data will be ephemeral on Render.");
+  db = new Database("solar_sizer.db");
+  db.pragma("foreign_keys = ON");
 
-  CREATE TABLE IF NOT EXISTS results (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    profile_name TEXT,
-    data TEXT, -- JSON string containing the full SavedResult object
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
+  // Create tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      name TEXT,
+      picture TEXT,
+      provider TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS hardware (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    type TEXT, -- 'inverter', 'panel', 'battery'
-    data TEXT, -- JSON string
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
+    CREATE TABLE IF NOT EXISTS profiles (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      name TEXT,
+      region TEXT,
+      battery_preference TEXT,
+      devices TEXT, -- JSON string
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS results (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      profile_name TEXT,
+      data TEXT, -- JSON string containing the full SavedResult object
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS hardware (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      type TEXT, -- 'inverter', 'panel', 'battery'
+      data TEXT, -- JSON string
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+  `);
+}
 
 async function startServer() {
   const app = express();
@@ -158,14 +172,27 @@ async function startServer() {
       const userData = userResponse.data;
       
       // Upsert user in database
-      const upsertUser = db.prepare(`
-        INSERT INTO users (id, email, name, picture, provider)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          picture = excluded.picture
-      `);
-      upsertUser.run(userData.sub, userData.email, userData.name, userData.picture, "google");
+      if (useSupabase) {
+        const { error } = await supabase
+          .from("users")
+          .upsert({
+            id: userData.sub,
+            email: userData.email,
+            name: userData.name,
+            picture: userData.picture,
+            provider: "google"
+          }, { onConflict: "id" });
+        if (error) console.error("Supabase User Upsert Error:", error);
+      } else {
+        const upsertUser = db.prepare(`
+          INSERT INTO users (id, email, name, picture, provider)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            picture = excluded.picture
+        `);
+        upsertUser.run(userData.sub, userData.email, userData.name, userData.picture, "google");
+      }
 
       req.session!.user = {
         id: userData.sub,
@@ -206,67 +233,119 @@ async function startServer() {
     next();
   };
 
-  app.get("/api/user/data", requireAuth, (req, res) => {
+  app.get("/api/user/data", requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     
-    const profiles = db.prepare("SELECT * FROM profiles WHERE user_id = ?").all(userId);
-    const results = db.prepare("SELECT * FROM results WHERE user_id = ?").all(userId);
-    const hardware = db.prepare("SELECT * FROM hardware WHERE user_id = ?").all(userId);
+    if (useSupabase) {
+      const [profilesRes, resultsRes, hardwareRes] = await Promise.all([
+        supabase.from("profiles").select("*").eq("user_id", userId),
+        supabase.from("results").select("*").eq("user_id", userId),
+        supabase.from("hardware").select("*").eq("user_id", userId),
+      ]);
 
-    res.json({
-      profiles: profiles.map((p: any) => ({ ...p, devices: JSON.parse(p.devices) })),
-      results: results.map((r: any) => ({ ...r, ...JSON.parse(r.data) })),
-      hardware: hardware.map((h: any) => ({ ...h, ...JSON.parse(h.data) }))
-    });
+      res.json({
+        profiles: (profilesRes.data || []).map((p: any) => ({ ...p, devices: p.devices })),
+        results: (resultsRes.data || []).map((r: any) => ({ ...r, ...r.data })),
+        hardware: (hardwareRes.data || []).map((h: any) => ({ ...h, ...h.data }))
+      });
+    } else {
+      const profiles = db.prepare("SELECT * FROM profiles WHERE user_id = ?").all(userId);
+      const results = db.prepare("SELECT * FROM results WHERE user_id = ?").all(userId);
+      const hardware = db.prepare("SELECT * FROM hardware WHERE user_id = ?").all(userId);
+
+      res.json({
+        profiles: profiles.map((p: any) => ({ ...p, devices: JSON.parse(p.devices) })),
+        results: results.map((r: any) => ({ ...r, ...JSON.parse(r.data) })),
+        hardware: hardware.map((h: any) => ({ ...h, ...JSON.parse(h.data) }))
+      });
+    }
   });
 
-  app.post("/api/user/profiles", requireAuth, (req, res) => {
+  app.post("/api/user/profiles", requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     const { id, name, region, battery_preference, devices } = req.body;
 
-    const upsert = db.prepare(`
-      INSERT INTO profiles (id, user_id, name, region, battery_preference, devices)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        region = excluded.region,
-        battery_preference = excluded.battery_preference,
-        devices = excluded.devices
-    `);
-    upsert.run(id, userId, name, region, battery_preference, JSON.stringify(devices));
+    if (useSupabase) {
+      const { error } = await supabase
+        .from("profiles")
+        .upsert({
+          id,
+          user_id: userId,
+          name,
+          region,
+          battery_preference,
+          devices
+        }, { onConflict: "id" });
+      if (error) return res.status(500).json({ error: error.message });
+    } else {
+      const upsert = db.prepare(`
+        INSERT INTO profiles (id, user_id, name, region, battery_preference, devices)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          region = excluded.region,
+          battery_preference = excluded.battery_preference,
+          devices = excluded.devices
+      `);
+      upsert.run(id, userId, name, region, battery_preference, JSON.stringify(devices));
+    }
     res.json({ success: true });
   });
 
-  app.post("/api/user/results", requireAuth, (req, res) => {
+  app.post("/api/user/results", requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     const { id, profile_name, ...data } = req.body;
 
-    const upsert = db.prepare(`
-      INSERT INTO results (id, user_id, profile_name, data)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        profile_name = excluded.profile_name,
-        data = excluded.data
-    `);
-    upsert.run(id, userId, profile_name, JSON.stringify(data));
+    if (useSupabase) {
+      const { error } = await supabase
+        .from("results")
+        .upsert({
+          id,
+          user_id: userId,
+          profile_name,
+          data
+        }, { onConflict: "id" });
+      if (error) return res.status(500).json({ error: error.message });
+    } else {
+      const upsert = db.prepare(`
+        INSERT INTO results (id, user_id, profile_name, data)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          profile_name = excluded.profile_name,
+          data = excluded.data
+      `);
+      upsert.run(id, userId, profile_name, JSON.stringify(data));
+    }
     res.json({ success: true });
   });
 
-  app.post("/api/user/hardware", requireAuth, (req, res) => {
+  app.post("/api/user/hardware", requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     const { id, type, ...data } = req.body;
 
-    const upsert = db.prepare(`
-      INSERT INTO hardware (id, user_id, type, data)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        data = excluded.data
-    `);
-    upsert.run(id, userId, type, JSON.stringify(data));
+    if (useSupabase) {
+      const { error } = await supabase
+        .from("hardware")
+        .upsert({
+          id,
+          user_id: userId,
+          type,
+          data
+        }, { onConflict: "id" });
+      if (error) return res.status(500).json({ error: error.message });
+    } else {
+      const upsert = db.prepare(`
+        INSERT INTO hardware (id, user_id, type, data)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          data = excluded.data
+      `);
+      upsert.run(id, userId, type, JSON.stringify(data));
+    }
     res.json({ success: true });
   });
 
-  app.delete("/api/user/:type/:id", requireAuth, (req, res) => {
+  app.delete("/api/user/:type/:id", requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     const { type, id } = req.params;
 
@@ -277,8 +356,17 @@ async function startServer() {
 
     if (!table) return res.status(400).json({ error: "Invalid type" });
 
-    const del = db.prepare(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`);
-    del.run(id, userId);
+    if (useSupabase) {
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (error) return res.status(500).json({ error: error.message });
+    } else {
+      const del = db.prepare(`DELETE FROM ${table} WHERE id = ? AND user_id = ?`);
+      del.run(id, userId);
+    }
     res.json({ success: true });
   });
 

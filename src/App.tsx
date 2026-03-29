@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { 
   Sun, 
   Battery as BatteryIcon, 
@@ -31,7 +33,9 @@ import {
   Download,
   Upload,
   Scale,
-  Columns
+  Columns,
+  FileJson,
+  FileText
 } from "lucide-react";
 import { Device, Region, SystemCombination, LoadAnalysis, DeviceCategory, AppTab, CalculationAttempt, Inverter, Panel, Battery, BatteryPreference, UserProfile, User, SavedResult } from "./types";
 import { buildCombinations } from "./utils/solarCalculator";
@@ -180,6 +184,8 @@ function ComparisonModal({
   onClose: () => void 
 }) {
   const [hasGenerator, setHasGenerator] = useState(initialHasGenerator);
+  const [genHours, setGenHours] = useState(6);
+  const [fuelPriceOverride, setFuelPriceOverride] = useState<number | null>(null);
 
   // Sync with parent if needed (for live comparisons)
   useEffect(() => {
@@ -193,14 +199,52 @@ function ComparisonModal({
   // Find the smallest generator that can handle the load
   const selectedGen = GENERATOR_PROFILES.find(g => g.capacity_va >= requiredVA) || GENERATOR_PROFILES[GENERATOR_PROFILES.length - 1];
   
-  const fuelPrice = FUEL_PRICES[selectedGen.fuel_type];
+  const defaultFuelPrice = FUEL_PRICES[selectedGen.fuel_type];
+  const fuelPrice = fuelPriceOverride ?? defaultFuelPrice;
   const consumption = selectedGen.fuel_consumption_l_hr;
   const maintenance = selectedGen.maintenance_mo;
   const initialCost = hasGenerator ? 0 : selectedGen.price;
   
-  const monthlyFuel = fuelPrice * consumption * 6 * 30; // 6 hours/day average
+  const monthlyFuel = fuelPrice * consumption * genHours * 30; 
   const monthlyTotal = monthlyFuel + maintenance;
   const fiveYearTotal = initialCost + (monthlyTotal * 12 * 5);
+
+  const exportToPDF = () => {
+    const doc = new jsPDF('l', 'mm', 'a4');
+    
+    doc.setFontSize(20);
+    doc.text("Solar vs. Generator Comparison Report", 14, 22);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 30);
+    doc.text(`Generator Profile: ${selectedGen.name}`, 14, 35);
+    doc.text(`Settings: ${genHours} hrs/day usage, ₦${fuelPrice}/L fuel price`, 14, 40);
+
+    const tableHeaders = [["Feature", ...systems.map((_, i) => `Option ${i+1}`), "Generator"]];
+    
+    const tableRows = [
+      ["Initial Cost", ...systems.map(s => `₦${s.total_price.toLocaleString()}`), initialCost === 0 ? "Owned" : `₦${initialCost.toLocaleString()}`],
+      ["Monthly Running Cost", ...systems.map(_ => "₦0 (Solar)"), `₦${monthlyTotal.toLocaleString()}`],
+      ["5-Year Total Cost", ...systems.map(s => `₦${s.total_price.toLocaleString()}`), `₦${fiveYearTotal.toLocaleString()}`],
+      ["Amortized Monthly", ...systems.map(s => `₦${(s.total_price/300).toLocaleString(undefined, {maximumFractionDigits: 0})} (25yr)`), `₦${((initialCost / selectedGen.lifespan_mo) + monthlyTotal).toLocaleString(undefined, {maximumFractionDigits: 0})} (${selectedGen.lifespan_mo/12}yr)`],
+      ["Fuel Type", ...systems.map(_ => "N/A"), selectedGen.fuel_type],
+      ["Fuel Consumption", ...systems.map(_ => "N/A"), `${selectedGen.fuel_consumption_l_hr} L/hr`],
+      ["Daily Usage", ...systems.map(_ => "N/A"), `${genHours} hrs/day`],
+      ["Fuel Price", ...systems.map(_ => "N/A"), `₦${fuelPrice}/L`],
+    ];
+
+    autoTable(doc, {
+      startY: 45,
+      head: tableHeaders,
+      body: tableRows,
+      theme: 'grid',
+      headStyles: { fillColor: [16, 185, 129] },
+      alternateRowStyles: { fillColor: [245, 245, 244] },
+    });
+
+    doc.save(`Solar_Comparison_${new Date().getTime()}.pdf`);
+  };
 
   return (
     <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -217,26 +261,58 @@ function ComparisonModal({
             <p className="text-stone-500 font-medium">Comparing {systems.length} Solar Setups vs. {selectedGen.name}</p>
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-2xl border border-stone-200 shadow-sm">
-              <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">I already own this generator</span>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-2xl border border-stone-200 shadow-sm">
+                <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">I already own this generator</span>
+                <button 
+                  onClick={() => setHasGenerator(!hasGenerator)}
+                  className={`w-12 h-6 rounded-full transition-all relative ${hasGenerator ? 'bg-emerald-600' : 'bg-stone-200'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${hasGenerator ? 'left-7' : 'left-1'}`} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200 shadow-sm">
+                  <span className="text-[10px] font-bold text-stone-400 uppercase">Hrs/Day</span>
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="24" 
+                    value={genHours} 
+                    onChange={(e) => setGenHours(Number(e.target.value))}
+                    className="w-12 text-xs font-bold text-stone-700 outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200 shadow-sm">
+                  <span className="text-[10px] font-bold text-stone-400 uppercase">₦/L</span>
+                  <input 
+                    type="number" 
+                    value={fuelPrice} 
+                    onChange={(e) => setFuelPriceOverride(Number(e.target.value))}
+                    className="w-20 text-xs font-bold text-stone-700 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
               <button 
-                onClick={() => setHasGenerator(!hasGenerator)}
-                className={`w-12 h-6 rounded-full transition-all relative ${hasGenerator ? 'bg-emerald-600' : 'bg-stone-200'}`}
+                onClick={exportToPDF}
+                className="flex items-center gap-2 px-4 py-2.5 bg-stone-100 text-stone-600 rounded-2xl font-bold hover:bg-stone-200 transition-all border border-stone-200"
               >
-                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${hasGenerator ? 'left-7' : 'left-1'}`} />
+                <Download className="w-5 h-5" /> PDF
+              </button>
+              {onSave && (
+                <button 
+                  onClick={onSave}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+                >
+                  <Save className="w-5 h-5" /> Save
+                </button>
+              )}
+              <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
+                <X className="w-6 h-6" />
               </button>
             </div>
-            {onSave && (
-              <button 
-                onClick={onSave}
-                className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
-              >
-                <Save className="w-5 h-5" /> Save Comparison
-              </button>
-            )}
-            <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
-              <X className="w-6 h-6" />
-            </button>
           </div>
         </div>
 
@@ -366,7 +442,7 @@ function ComparisonModal({
         
         <div className="p-8 bg-stone-50 border-t border-stone-100 text-center">
           <p className="text-sm text-stone-500 font-medium">
-            Note: Generator costs are based on {selectedGen.fuel_type} at ₦{fuelPrice}/L and 6 hours daily usage. 
+            Note: Generator costs are based on {selectedGen.fuel_type} at ₦{fuelPrice}/L and {genHours} hours daily usage. 
             Solar systems pay for themselves in approximately <span className="text-emerald-600 font-bold">{(systems[0].total_price / monthlyTotal).toFixed(1)} months</span>.
           </p>
         </div>
@@ -414,6 +490,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("calculator");
   const [region, setRegion] = useState<Region>("SE_SS");
   const [batteryPreference, setBatteryPreference] = useState<BatteryPreference>("any");
+  const [tolerance, setTolerance] = useState<number>(20);
   const [devices, setDevices] = useState<Device[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [savedResults, setSavedResults] = useState<SavedResult[]>([]);
@@ -591,8 +668,17 @@ export default function App() {
 
   const results = useMemo(() => {
     if (devices.length === 0) return null;
-    const res = buildCombinations(region, devices, { inverters, panels, batteries }, batteryPreference);
+    const res = buildCombinations(region, devices, { inverters, panels, batteries }, batteryPreference, tolerance);
     
+    // Sort systems: Optimal -> Conditional -> High Risk, then by price
+    res.systems.sort((a, b) => {
+      const statusOrder = { "Optimal": 0, "Conditional": 1, "High Risk": 2 };
+      if (statusOrder[a.status] !== statusOrder[b.status]) {
+        return statusOrder[a.status] - statusOrder[b.status];
+      }
+      return a.total_price - b.total_price;
+    });
+
     // Log attempt internally
     const attempt: CalculationAttempt = {
       timestamp: new Date().toISOString(),
@@ -825,41 +911,186 @@ export default function App() {
     URL.revokeObjectURL(a.href);
   };
 
-  const exportResults = (results: { analysis: LoadAnalysis; systems: SystemCombination[] }) => {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const getHourLabel = (hour: number) => {
-      if (hour === 0) return "12 AM";
-      if (hour === 24) return "12 AM (Midnight)";
-      if (hour === 12) return "12 PM";
-      return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
-    };
+  const exportSingleResultToPDF = (result: SystemCombination, profileName: string) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
 
-    let content = `SOLARSIZER PRO - CALCULATION REPORT\n`;
-    content += `Generated: ${new Date().toLocaleString()}\n`;
-    content += `Region: ${REGIONS.find(r => r.value === region)?.label}\n`;
-    content += `------------------------------------------\n\n`;
+    // Header
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageWidth, 40, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont("helvetica", "bold");
+    doc.text("SolarSizer Pro", 14, 20);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("System Configuration Report", 14, 30);
+    doc.text(new Date().toLocaleDateString(), pageWidth - 35, 30);
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(16);
+    doc.text(`Configuration for: ${profileName}`, 14, 55);
+
+    // System Overview
+    autoTable(doc, {
+      startY: 65,
+      head: [["Component", "Configuration"]],
+      body: [
+        ["Inverter", result.inverter],
+        ["Battery Bank", result.battery_config],
+        ["Solar Array", result.panel_config],
+        ["Total Price", `N${result.total_price.toLocaleString()}`],
+      ],
+      theme: "striped",
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    // Detailed Specs
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 10,
+      head: [["Technical Specification", "Value"]],
+      body: [
+        ["System Voltage", `${result.inverter_data.system_vdc}V DC`],
+        ["AC Output", `${result.inverter_data.max_ac_w}W`],
+        ["PV Input Max", `${result.inverter_data.cc_max_pv_w}W`],
+        ["Battery Type", result.battery_data.type.toUpperCase()],
+        ["Battery Capacity", `${result.battery_data.capacity_ah}Ah`],
+        ["Panel Wattage", `${result.panel_data.watts}W`],
+      ],
+      theme: "grid",
+      headStyles: { fillColor: [15, 23, 42] },
+    });
+
+    doc.save(`SolarSizer_${profileName.replace(/\s+/g, "_")}_Config.pdf`);
+  };
+
+  const exportResultsToPDF = (results: { analysis: LoadAnalysis; systems: SystemCombination[] }) => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const timestamp = new Date().toLocaleString();
     
-    content += `LOAD PROFILE SUMMARY\n`;
-    content += `Peak Surge: ${results.analysis.max_surge}W\n`;
-    content += `Night Usage: ${results.analysis.nighttime_wh}Wh\n`;
-    content += `Daily Total: ${results.analysis.total_daily_wh}Wh\n\n`;
-
-    content += `DEVICES LIST\n`;
-    devices.forEach(d => {
-      content += `- ${d.name}: ${d.qty}x ${d.watts}W (${d.category})\n`;
-      content += `  Schedule: ${d.ranges.map(r => `${getHourLabel(r.start)} - ${getHourLabel(r.end)}`).join(", ")}\n`;
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129); // Emerald-600
+    doc.text("SolarSizer Pro - Calculation Report", 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${timestamp}`, 14, 28);
+    doc.text(`Region: ${REGIONS.find(r => r.value === region)?.label}`, 14, 33);
+    
+    doc.setFontSize(16);
+    doc.setTextColor(0);
+    doc.text("Load Profile Summary", 14, 45);
+    
+    autoTable(doc, {
+      startY: 50,
+      head: [["Metric", "Value"]],
+      body: [
+        ["Peak Surge", `${results.analysis.max_surge}W`],
+        ["Night Usage", `${results.analysis.nighttime_wh}Wh`],
+        ["Daily Total", `${results.analysis.total_daily_wh}Wh`],
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] },
     });
-    content += `\n`;
 
-    content += `RECOMMENDED SYSTEMS (${results.systems.length} found)\n`;
-    results.systems.forEach((sys, i) => {
-      content += `\n[System #${i + 1}] ${sys.status === "Optimal" ? "★ " : ""}${sys.inverter}\n`;
-      content += `  - Battery: ${sys.battery_config}\n`;
-      content += `  - Solar: ${sys.panel_config}\n`;
-      content += `  - Estimated Price: ₦${sys.total_price.toLocaleString()}\n`;
+    doc.text("Device List", 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [["Device", "Qty", "Watts", "Category", "Schedule"]],
+      body: devices.map(d => [
+        d.name,
+        d.qty.toString(),
+        `${d.watts}W`,
+        d.category,
+        d.ranges.map(r => `${r.start}:00 - ${r.end}:00`).join(", ")
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [16, 185, 129] },
     });
 
-    downloadFile(content, `SolarSizer_Report_${timestamp}.txt`, "text/plain");
+    doc.addPage();
+    doc.text("Recommended Systems", 14, 20);
+
+    autoTable(doc, {
+      startY: 25,
+      head: [["System", "Battery", "Solar", "Price"]],
+      body: results.systems.map(sys => [
+        sys.inverter,
+        sys.battery_config,
+        sys.panel_config,
+        `₦${sys.total_price.toLocaleString()}`
+      ]),
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    doc.save(`SolarSizer_Report_${new Date().getTime()}.pdf`);
+  };
+
+  const exportProfileToPDF = (p: UserProfile) => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129);
+    doc.text(`Profile: ${p.name}`, 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Region: ${REGIONS.find(r => r.value === p.region)?.label}`, 14, 28);
+    doc.text(`Battery Preference: ${p.batteryPreference}`, 14, 33);
+
+    autoTable(doc, {
+      startY: 40,
+      head: [["Device", "Qty", "Watts", "Category", "Schedule"]],
+      body: p.devices.map(d => [
+        d.name,
+        d.qty.toString(),
+        `${d.watts}W`,
+        d.category,
+        d.ranges.map(r => `${r.start}:00 - ${r.end}:00`).join(", ")
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    doc.save(`SolarSizer_Profile_${p.name.replace(/\s+/g, '_')}.pdf`);
+  };
+
+  const exportHardwareDatabaseToPDF = () => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129);
+    doc.text("SolarSizer Pro - Hardware Database", 14, 20);
+
+    doc.setFontSize(14);
+    doc.text("Inverters", 14, 35);
+    autoTable(doc, {
+      startY: 40,
+      head: [["Name", "Max AC", "DC Volts", "PV Input", "Price"]],
+      body: inverters.map(inv => [inv.name, `${inv.max_ac_w}W`, `${inv.system_vdc}V`, `${inv.cc_max_pv_w}W`, `₦${inv.price.toLocaleString()}`]),
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    doc.text("Solar Panels", 14, (doc as any).lastAutoTable.finalY + 15);
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [["Name", "Watts", "Voc", "Isc", "Price"]],
+      body: panels.map(p => [p.name, `${p.watts}W`, `${p.voc}V`, `${p.isc}A`, `₦${p.price.toLocaleString()}`]),
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    doc.text("Batteries", 14, (doc as any).lastAutoTable.finalY + 15);
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [["Name", "Voltage", "Capacity", "Type", "Price"]],
+      body: batteries.map(b => [b.name, `${b.voltage}V`, `${b.capacity_ah}Ah`, b.type, `₦${b.price.toLocaleString()}`]),
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] },
+    });
+
+    doc.save("SolarSizer_Hardware_Database.pdf");
   };
 
   const exportResultsJSON = (results: { analysis: LoadAnalysis; systems: SystemCombination[] }) => {
@@ -1212,6 +1443,7 @@ export default function App() {
   };
 
   const generateQuote = (sys: SystemCombination) => {
+    const doc = new jsPDF();
     const date = new Date().toLocaleDateString();
     const quoteId = `QT-${Math.floor(100000 + Math.random() * 900000)}`;
     
@@ -1225,87 +1457,70 @@ export default function App() {
       }
     }
 
-    const quoteContent = `
-=========================================
-          SOLARSIZER PRO QUOTE
-=========================================
-Quote ID: ${quoteId}
-Date: ${date}
-Location: ${REGIONS.find(r => r.value === region)?.label}
------------------------------------------
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129); // emerald-600
+    doc.text("SOLARSIZER PRO QUOTE", 105, 20, { align: "center" });
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Quote ID: ${quoteId}`, 20, 35);
+    doc.text(`Date: ${date}`, 20, 40);
+    doc.text(`Location: ${REGIONS.find(r => r.value === region)?.label}`, 20, 45);
 
-SYSTEM SPECIFICATIONS:
-- Status: ${sys.status}
-- Advice: ${finalAdvice}
-- Inverter: ${sys.inverter}
-- Battery Bank: ${sys.battery_config}
-- Solar Array: ${sys.panel_config} (${sys.array_size_w}W)
-- Est. Daily Yield: ${sys.daily_yield.toFixed(0)}Wh
+    // System Specifications
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text("SYSTEM SPECIFICATIONS", 20, 60);
+    
+    doc.setFontSize(10);
+    const specs = [
+      ["Status", sys.status],
+      ["Advice", finalAdvice],
+      ["Inverter", sys.inverter],
+      ["Battery Bank", sys.battery_config],
+      ["Solar Array", `${sys.panel_config} (${sys.array_size_w}W)`],
+      ["Est. Daily Yield", `${sys.daily_yield.toFixed(0)}Wh`]
+    ];
 
-ITEMIZED COST BREAKDOWN:
-1. Inverter Unit:           ₦${sys.inverter_price.toLocaleString()}
-2. Battery Storage Bank:    ₦${sys.battery_price.toLocaleString()}
-3. Solar PV Array:          ₦${sys.panel_price.toLocaleString()}
------------------------------------------
-TOTAL INVESTMENT:           ₦${sys.total_price.toLocaleString()}
+    autoTable(doc, {
+      startY: 65,
+      head: [["Specification", "Details"]],
+      body: specs,
+      theme: "striped",
+      headStyles: { fillColor: [16, 185, 129] }
+    });
 
------------------------------------------
-INVOICE SUMMARY:
-Subtotal:                   ₦${sys.total_price.toLocaleString()}
-VAT (7.5%):                 ₦${(sys.total_price * 0.075).toLocaleString()}
------------------------------------------
-GRAND TOTAL:                ₦${(sys.total_price * 1.075).toLocaleString()}
+    // Cost Breakdown
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    doc.setFontSize(14);
+    doc.text("ITEMIZED COST BREAKDOWN", 20, finalY);
 
-=========================================
-Thank you for choosing SolarSizer Pro!
-This quote is valid for 14 days.
-=========================================
-    `.trim();
+    const costs = [
+      ["1", "Inverter Unit", `N${sys.inverter_price.toLocaleString()}`],
+      ["2", "Battery Storage Bank", `N${sys.battery_price.toLocaleString()}`],
+      ["3", "Solar PV Array", `N${sys.panel_price.toLocaleString()}`],
+      ["", "TOTAL INVESTMENT", `N${sys.total_price.toLocaleString()}`]
+    ];
 
-    const getHourLabel = (hour: number) => {
-      if (hour === 0) return "12 AM";
-      if (hour === 24) return "12 AM (Midnight)";
-      if (hour === 12) return "12 PM";
-      return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
-    };
+    autoTable(doc, {
+      startY: finalY + 5,
+      head: [["#", "Component", "Price"]],
+      body: costs,
+      theme: "grid",
+      headStyles: { fillColor: [16, 185, 129] },
+      foot: [["", "GRAND TOTAL (Inc. 7.5% VAT)", `N${(sys.total_price * 1.075).toLocaleString()}`]],
+      footStyles: { fillColor: [245, 245, 244], textColor: [0, 0, 0], fontStyle: "bold" }
+    });
 
-    const usageDevices = adjustedLoad?.devices || devices;
-    const usageContent = `
-=========================================
-          LOAD PROFILE & USAGE
-=========================================
-Quote ID: ${quoteId}
-Date: ${date}
------------------------------------------
+    // Footer
+    const footerY = (doc as any).lastAutoTable.finalY + 20;
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text("Thank you for choosing SolarSizer Pro!", 105, footerY, { align: "center" });
+    doc.text("This quote is valid for 14 days.", 105, footerY + 5, { align: "center" });
 
-DEVICE SCHEDULE:
-${usageDevices.map(d => `
-- ${d.name} (${d.watts}W x ${d.qty})
-  Schedule: ${d.ranges.map(r => `${getHourLabel(r.start)} - ${getHourLabel(r.end)}`).join(", ")}
-`).join("")}
-
------------------------------------------
-ENERGY ANALYSIS:
-Original Daily Load: ${results?.analysis.total_daily_wh.toFixed(0)}Wh
-System Daily Yield: ${sys.daily_yield.toFixed(0)}Wh
-Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.deficit.toFixed(0)}Wh
-=========================================
-    `.trim();
-
-    const downloadFile = (content: string, filename: string) => {
-      const blob = new Blob([content], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    };
-
-    downloadFile(quoteContent, `SolarSizer_Quote_${quoteId}.txt`);
-    downloadFile(usageContent, `SolarSizer_Usage_${quoteId}.txt`);
+    doc.save(`SolarSizer_Quote_${quoteId}.pdf`);
   };
 
   return (
@@ -1449,6 +1664,33 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       {pref.replace("-", " ")}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-stone-100">
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Scale className="w-5 h-5 text-emerald-600" />
+                    <h2 className="font-semibold text-lg">Tolerance Level</h2>
+                  </div>
+                  <span className="text-sm font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">{tolerance}%</span>
+                </div>
+                <p className="text-xs text-stone-500 mb-4 leading-relaxed">
+                  Adjust how much energy deficit (shortage) you're willing to accept before a system is marked as "High Risk".
+                </p>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="50" 
+                  step="5"
+                  value={tolerance}
+                  onChange={(e) => setTolerance(parseInt(e.target.value))}
+                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
+                <div className="flex justify-between mt-2 text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+                  <span>Strict (0%)</span>
+                  <span>Balanced (20%)</span>
+                  <span>Relaxed (50%)</span>
                 </div>
               </div>
             </section>
@@ -1677,7 +1919,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       <span className="text-sm text-stone-500">{results.systems.length} configurations found</span>
                       <div className="flex gap-2">
                         <button 
-                          onClick={() => exportResults(results)}
+                          onClick={() => exportResultsToPDF(results)}
                           className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-100 transition-all border border-emerald-100"
                         >
                           <Download className="w-3.5 h-3.5" /> Export Report
@@ -1713,123 +1955,145 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {results.systems.map((sys, idx) => (
-                        <motion.div
-                          key={idx}
-                          initial={{ opacity: 0, x: 20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: idx * 0.05 }}
-                          className={`bg-white p-6 rounded-2xl shadow-sm border transition-all group relative overflow-hidden ${
-                            isSelectedForComparison(sys) ? 'border-emerald-500 ring-2 ring-emerald-500/10' : 'border-stone-200 hover:border-emerald-500'
-                          }`}
-                        >
-                          {idx === 0 && (
-                            <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-bl-xl">
-                              Best Value
-                            </div>
-                          )}
-                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                            <div className="space-y-4 flex-1">
-                              <div className="flex items-center gap-3">
-                                <div className="p-2 bg-stone-100 rounded-lg">
-                                  <Zap className="w-5 h-5 text-stone-600" />
+                      {(() => {
+                        const sortedSystems = [...results.systems].sort((a, b) => {
+                          const statusOrder: Record<string, number> = { "Optimal": 0, "Conditional": 1, "High Risk": 2 };
+                          if (statusOrder[a.status] !== statusOrder[b.status]) {
+                            return statusOrder[a.status] - statusOrder[b.status];
+                          }
+                          return a.total_price - b.total_price;
+                        });
+
+                        // Categorize for "cheapest of each category first"
+                        const categories = ["Optimal", "Conditional", "High Risk"];
+                        const cheapestOfEach = categories.map(cat => 
+                          sortedSystems.find(s => s.status === cat)
+                        ).filter(Boolean) as SystemCombination[];
+
+                        const remaining = sortedSystems.filter(s => 
+                          !cheapestOfEach.some(c => c === s)
+                        );
+
+                        const finalDisplay = [...cheapestOfEach, ...remaining];
+
+                        return finalDisplay.map((sys, idx) => (
+                          <motion.div
+                            key={idx}
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: idx * 0.05 }}
+                            className={`bg-white p-6 rounded-2xl shadow-sm border transition-all group relative overflow-hidden ${
+                              isSelectedForComparison(sys) ? 'border-emerald-500 ring-2 ring-emerald-500/10' : 'border-stone-200 hover:border-emerald-500'
+                            }`}
+                          >
+                            {idx < cheapestOfEach.length && (
+                              <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-bl-xl">
+                                {sys.status === "Optimal" ? "Perfect Match" : sys.status === "Conditional" ? "Budget Option" : "High Risk Entry"}
+                              </div>
+                            )}
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                              <div className="space-y-4 flex-1">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-stone-100 rounded-lg">
+                                    <Zap className="w-5 h-5 text-stone-600" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <h3 className="font-bold text-lg">{sys.inverter}</h3>
+                                      {sys.status === "Optimal" ? (
+                                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
+                                          <CheckCircle2 className="w-3 h-3" /> Perfect Match
+                                        </span>
+                                      ) : sys.status === "High Risk" ? (
+                                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
+                                          <AlertCircle className="w-3 h-3" /> High Risk
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
+                                          <AlertCircle className="w-3 h-3" /> Budget Option
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-stone-500 uppercase tracking-wider font-semibold">Hybrid System Core</p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <h3 className="font-bold text-lg">{sys.inverter}</h3>
-                                    {sys.status === "Optimal" ? (
-                                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
-                                        <CheckCircle2 className="w-3 h-3" /> Perfect Match
-                                      </span>
-                                    ) : sys.status === "High Risk" ? (
-                                      <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
-                                        <AlertCircle className="w-3 h-3" /> High Risk
-                                      </span>
-                                    ) : (
-                                      <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1">
-                                        <AlertCircle className="w-3 h-3" /> Budget Option
-                                      </span>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div className="flex items-start gap-2">
+                                    <BatteryIcon className="w-4 h-4 text-emerald-600 mt-0.5" />
+                                    <div>
+                                      <p className="text-sm font-semibold">{sys.battery_config}</p>
+                                      <p className="text-xs text-stone-500">Storage Configuration</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-start gap-2">
+                                    <Sun className="w-4 h-4 text-amber-500 mt-0.5" />
+                                    <div>
+                                      <p className="text-sm font-semibold">{sys.panel_config}</p>
+                                      <p className="text-xs text-stone-500">{sys.array_size_w}W Array • {sys.daily_yield.toFixed(0)}Wh/day</p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Advice Section */}
+                                <div className={`p-3 rounded-xl text-xs flex gap-2 items-start ${
+                                  sys.status === 'Optimal' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 
+                                  sys.status === 'High Risk' ? 'bg-red-50 text-red-800 border border-red-100' :
+                                  'bg-amber-50 text-amber-800 border border-amber-100'
+                                }`}>
+                                  {sys.status === 'Optimal' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Info className="w-4 h-4 shrink-0" />}
+                                  <p>{sys.advice}</p>
+                                </div>
+                              </div>
+
+                              <div className="md:text-right pt-4 md:pt-0 border-t md:border-t-0 border-stone-100">
+                                <p className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-1">Estimated Cost</p>
+                                <p className="text-3xl font-black text-stone-900">
+                                  <span className="text-sm font-bold mr-1">NGN</span>
+                                  {sys.total_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </p>
+                                <div className="mt-4 flex flex-col gap-2">
+                                  <button 
+                                    onClick={() => setSelectedSystemDetails(sys)}
+                                    className="w-full px-6 py-2.5 bg-stone-900 text-white rounded-xl font-semibold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    View Details <ChevronRight className="w-4 h-4" />
+                                  </button>
+                                  <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => setSelectedSystemLog(sys.log)}
+                                      className="p-2.5 bg-stone-100 text-stone-600 rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center"
+                                      title="View Calculation Logs"
+                                    >
+                                      <ListIcon className="w-5 h-5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => toggleComparison(sys)}
+                                      className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                                        isSelectedForComparison(sys)
+                                        ? 'bg-emerald-600 text-white shadow-md'
+                                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                                      }`}
+                                    >
+                                      <Scale className="w-4 h-4" /> 
+                                      {isSelectedForComparison(sys) ? "Selected" : "Compare"}
+                                    </button>
+                                    {user && (
+                                      <button 
+                                        onClick={() => saveResult(sys)}
+                                        className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl hover:bg-emerald-100 transition-all flex items-center justify-center"
+                                        title="Save this configuration"
+                                      >
+                                        <Save className="w-5 h-5" />
+                                      </button>
                                     )}
                                   </div>
-                                  <p className="text-xs text-stone-500 uppercase tracking-wider font-semibold">Hybrid System Core</p>
-                                </div>
-                              </div>
-                              
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex items-start gap-2">
-                                  <BatteryIcon className="w-4 h-4 text-emerald-600 mt-0.5" />
-                                  <div>
-                                    <p className="text-sm font-semibold">{sys.battery_config}</p>
-                                    <p className="text-xs text-stone-500">Storage Configuration</p>
-                                  </div>
-                                </div>
-                                <div className="flex items-start gap-2">
-                                  <Sun className="w-4 h-4 text-amber-500 mt-0.5" />
-                                  <div>
-                                    <p className="text-sm font-semibold">{sys.panel_config}</p>
-                                    <p className="text-xs text-stone-500">{sys.array_size_w}W Array • {sys.daily_yield.toFixed(0)}Wh/day</p>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Advice Section */}
-                              <div className={`p-3 rounded-xl text-xs flex gap-2 items-start ${
-                                sys.status === 'Optimal' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 
-                                sys.status === 'High Risk' ? 'bg-red-50 text-red-800 border border-red-100' :
-                                'bg-amber-50 text-amber-800 border border-amber-100'
-                              }`}>
-                                {sys.status === 'Optimal' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Info className="w-4 h-4 shrink-0" />}
-                                <p>{sys.advice}</p>
-                              </div>
-                            </div>
-
-                            <div className="md:text-right pt-4 md:pt-0 border-t md:border-t-0 border-stone-100">
-                              <p className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-1">Estimated Cost</p>
-                              <p className="text-3xl font-black text-stone-900">
-                                <span className="text-sm font-bold mr-1">NGN</span>
-                                {sys.total_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </p>
-                              <div className="mt-4 flex flex-col gap-2">
-                                <button 
-                                  onClick={() => setSelectedSystemDetails(sys)}
-                                  className="w-full px-6 py-2.5 bg-stone-900 text-white rounded-xl font-semibold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
-                                >
-                                  View Details <ChevronRight className="w-4 h-4" />
-                                </button>
-                                <div className="flex gap-2">
-                                  <button 
-                                    onClick={() => setSelectedSystemLog(sys.log)}
-                                    className="p-2.5 bg-stone-100 text-stone-600 rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center"
-                                    title="View Calculation Logs"
-                                  >
-                                    <ListIcon className="w-5 h-5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => toggleComparison(sys)}
-                                    className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
-                                      isSelectedForComparison(sys)
-                                      ? 'bg-emerald-600 text-white shadow-md'
-                                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                                    }`}
-                                  >
-                                    <Scale className="w-4 h-4" /> 
-                                    {isSelectedForComparison(sys) ? "Selected" : "Compare"}
-                                  </button>
-                                  {user && (
-                                    <button 
-                                      onClick={() => saveResult(sys)}
-                                      className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl hover:bg-emerald-100 transition-all flex items-center justify-center"
-                                      title="Save this configuration"
-                                    >
-                                      <Save className="w-5 h-5" />
-                                    </button>
-                                  )}
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        </motion.div>
-                      ))}
+                          </motion.div>
+                        ));
+                      })()}
                     </div>
                   )}
 
@@ -1911,10 +2175,10 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                   <Download className="w-4 h-4" /> Export JSON
                 </button>
                 <button 
-                  onClick={exportHardwareDatabase}
+                  onClick={exportHardwareDatabaseToPDF}
                   className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
                 >
-                  <Download className="w-4 h-4" /> Export MD
+                  <Download className="w-4 h-4" /> Export PDF
                 </button>
                 <button onClick={() => setShowAddHardware("inverter")} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all">
                   <Plus className="w-4 h-4" /> Add Inverter
@@ -2123,12 +2387,51 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     </div>
                   </Tooltip>
                 </div>
-                <button 
-                  onClick={exportProfilesJSON}
-                  className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
-                >
-                  <Download className="w-4 h-4" /> Export Profiles
-                </button>
+                <div className="relative group/export">
+                  <button 
+                    className="bg-stone-100 text-stone-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
+                  >
+                    <Download className="w-4 h-4" /> Export Profiles
+                  </button>
+                  <div className="absolute right-0 top-full mt-1 bg-white border border-stone-200 rounded-xl shadow-xl py-2 w-48 hidden group-hover/export:block z-50">
+                    <button 
+                      onClick={exportProfilesJSON}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-medium flex items-center gap-2"
+                    >
+                      <FileJson className="w-4 h-4 text-stone-400" /> Export as JSON
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const doc = new jsPDF();
+                        doc.setFontSize(20);
+                        doc.text("Saved Profiles Inventory", 20, 20);
+                        
+                        profiles.forEach((p, i) => {
+                          if (i > 0) doc.addPage();
+                          doc.setFontSize(16);
+                          doc.text(`Profile: ${p.name}`, 20, 40);
+                          doc.setFontSize(10);
+                          doc.text(`Region: ${REGIONS.find(r => r.value === p.region)?.label}`, 20, 50);
+                          doc.text(`Battery Preference: ${p.batteryPreference}`, 20, 55);
+                          
+                          autoTable(doc, {
+                            startY: 65,
+                            head: [["Device", "Watts", "Qty", "Hours", "Daily Wh"]],
+                            body: p.devices.map(d => {
+                              const hours = d.ranges.reduce((acc, r) => acc + (r.end - r.start), 0);
+                              return [d.name, d.watts, d.qty, hours, d.watts * d.qty * hours];
+                            }),
+                            theme: "striped"
+                          });
+                        });
+                        doc.save("SolarSizer_Profiles.pdf");
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-medium flex items-center gap-2"
+                    >
+                      <FileText className="w-4 h-4 text-stone-400" /> Export as PDF
+                    </button>
+                  </div>
+                </div>
                 <button 
                   onClick={() => setShowSaveProfile(true)}
                   className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all"
@@ -2291,16 +2594,55 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                           </div>
                         )}
 
-                        <button 
-                          onClick={() => {
-                            if (isComparison) setSelectedSavedComparison(r);
-                            else if (isAnalysis) setSelectedSavedAnalysis(r);
-                            else setSelectedSystemDetails(r.system_data!);
-                          }}
-                          className="w-full py-2.5 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
-                        >
-                          {isComparison ? "Open Comparison" : isAnalysis ? "Open Analysis" : "View Details"}
-                        </button>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              if (isComparison) setSelectedSavedComparison(r);
+                              else if (isAnalysis) setSelectedSavedAnalysis(r);
+                              else setSelectedSystemDetails(r.system_data!);
+                            }}
+                            className="flex-[2] py-2.5 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
+                          >
+                            {isComparison ? "Open Comparison" : isAnalysis ? "Open Analysis" : "View Details"}
+                          </button>
+                          <button 
+                            onClick={() => {
+                              if (isComparison) {
+                                // Implement Comparison PDF export
+                                const doc = new jsPDF("l", "mm", "a4");
+                                doc.setFontSize(20);
+                                doc.text(`System Comparison: ${r.profile_name}`, 20, 20);
+                                
+                                const headers = ["Feature", ...r.systems!.map(s => s.inverter)];
+                                const rows = [
+                                  ["Total Price", ...r.systems!.map(s => `N${s.total_price.toLocaleString()}`)],
+                                  ["Solar Array", ...r.systems!.map(s => s.panel_config)],
+                                  ["Battery Bank", ...r.systems!.map(s => s.battery_config)],
+                                  ["Daily Yield", ...r.systems!.map(s => `${s.daily_yield.toFixed(0)}Wh`)],
+                                  ["Status", ...r.systems!.map(s => s.status)]
+                                ];
+
+                                autoTable(doc, {
+                                  startY: 30,
+                                  head: [headers],
+                                  body: rows,
+                                  theme: "grid",
+                                  headStyles: { fillColor: [16, 185, 129] }
+                                });
+                                
+                                doc.save(`Comparison_${r.profile_name}.pdf`);
+                              } else if (isAnalysis) {
+                                exportResultsToPDF({ analysis: r.analysis!, systems: r.systems! });
+                              } else {
+                                generateQuote(r.system_data!);
+                              }
+                            }}
+                            className="flex-1 py-2.5 bg-stone-100 text-stone-600 rounded-xl text-sm font-bold hover:bg-stone-200 transition-all flex items-center justify-center"
+                            title="Download PDF"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })

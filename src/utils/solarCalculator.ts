@@ -185,7 +185,8 @@ export function buildCombinations(
   location: Region,
   devices: Device[],
   hardware: { inverters: Inverter[]; panels: Panel[]; batteries: Battery[] },
-  batteryPreference: BatteryPreference = "any"
+  batteryPreference: BatteryPreference = "any",
+  tolerance: number = 20
 ): { analysis: LoadAnalysis; systems: SystemCombination[]; allLogs: string[][] } {
   const analysis = calculateUserNeeds(devices);
   const { max_surge, nighttime_wh, total_daily_wh } = analysis;
@@ -371,7 +372,7 @@ export function buildCombinations(
           status = "Optimal";
           advice = "Perfect match. Fully covers your scheduled daily energy needs based on hourly simulation.";
           panelLog.push(`✅ System passed 24-hour hourly stress test.`);
-        } else if (deficitPercentage <= 20) {
+        } else if (deficitPercentage <= tolerance) {
           // ALLOWED: It failed, but it's close enough for the user to fix!
           status = "Conditional";
           const controllerWarning = ccType.toUpperCase();
