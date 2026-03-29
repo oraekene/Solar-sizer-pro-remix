@@ -74,6 +74,9 @@ export interface SystemCombination {
   status: "Optimal" | "Conditional" | "High Risk";
   advice: string;
   log: string[];
+  inverter_data: Inverter;
+  panel_data: Panel;
+  battery_data: Battery;
 }
 
 export interface CalculationAttempt {

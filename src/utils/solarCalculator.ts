@@ -405,6 +405,9 @@ export function buildCombinations(
           status,
           advice,
           log: panelLog,
+          inverter_data: inv,
+          panel_data: panel,
+          battery_data: bat,
         });
         allLogs.push(panelLog);
       }

@@ -75,6 +75,11 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Health check for UptimeRobot
+  app.get('/healthz', (req, res) => {
+    res.status(200).send('OK');
+  });
+
   // Trust proxy is required for correct host/protocol detection in Cloud Run
   app.set('trust proxy', true);
 
