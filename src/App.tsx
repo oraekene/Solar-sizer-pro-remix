@@ -101,16 +101,97 @@ const getSystemRecommendations = (sys: SystemCombination, allSystems: SystemComb
   return recommendations;
 };
 
-function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; onClose: () => void }) {
-  // Generator Baseline
-  const genFuelPrice = 1100; // NGN/L
-  const genConsumption = 0.7; // L/hr
-  const genMaintenance = 5000; // NGN/mo
-  const genInitialCost = 450000; // NGN for a decent 2.5kVA gen
+interface GeneratorProfile {
+  name: string;
+  capacity_va: number;
+  fuel_type: "Petrol" | "Diesel";
+  fuel_consumption_l_hr: number;
+  price: number;
+  maintenance_mo: number;
+  lifespan_mo: number;
+}
+
+const GENERATOR_PROFILES: GeneratorProfile[] = [
+  {
+    name: "Small Petrol (I Better Pass My Neighbor)",
+    capacity_va: 950,
+    fuel_type: "Petrol",
+    fuel_consumption_l_hr: 0.4,
+    price: 85000,
+    maintenance_mo: 3000,
+    lifespan_mo: 24,
+  },
+  {
+    name: "Standard Petrol (Medium)",
+    capacity_va: 2500,
+    fuel_type: "Petrol",
+    fuel_consumption_l_hr: 0.8,
+    price: 280000,
+    maintenance_mo: 5000,
+    lifespan_mo: 36,
+  },
+  {
+    name: "Large Petrol",
+    capacity_va: 5000,
+    fuel_type: "Petrol",
+    fuel_consumption_l_hr: 1.5,
+    price: 550000,
+    maintenance_mo: 8000,
+    lifespan_mo: 48,
+  },
+  {
+    name: "Small Diesel",
+    capacity_va: 10000,
+    fuel_type: "Diesel",
+    fuel_consumption_l_hr: 2.0,
+    price: 2500000,
+    maintenance_mo: 25000,
+    lifespan_mo: 60,
+  },
+  {
+    name: "Large Diesel",
+    capacity_va: 25000,
+    fuel_type: "Diesel",
+    fuel_consumption_l_hr: 4.5,
+    price: 6500000,
+    maintenance_mo: 50000,
+    lifespan_mo: 120,
+  }
+];
+
+const FUEL_PRICES = {
+  Petrol: 1100,
+  Diesel: 1400,
+};
+
+function ComparisonModal({ 
+  systems, 
+  analysis, 
+  hasGenerator, 
+  setHasGenerator, 
+  onClose 
+}: { 
+  systems: SystemCombination[]; 
+  analysis: LoadAnalysis;
+  hasGenerator: boolean;
+  setHasGenerator: (val: boolean) => void;
+  onClose: () => void 
+}) {
+  // Generator Selection Logic
+  const peakWatts = analysis.max_surge;
+  const requiredVA = peakWatts / 0.8; // Assuming 0.8 power factor for generators
   
-  const monthlyGenFuel = genFuelPrice * genConsumption * 6 * 30; // 6 hours/day average
-  const monthlyGenTotal = monthlyGenFuel + genMaintenance;
-  const fiveYearGenTotal = genInitialCost + (monthlyGenTotal * 12 * 5);
+  // Find the smallest generator that can handle the load
+  const selectedGen = GENERATOR_PROFILES.find(g => g.capacity_va >= requiredVA) || GENERATOR_PROFILES[GENERATOR_PROFILES.length - 1];
+  
+  const fuelPrice = FUEL_PRICES[selectedGen.fuel_type];
+  const consumption = selectedGen.fuel_consumption_l_hr;
+  const maintenance = selectedGen.maintenance_mo;
+  const initialCost = hasGenerator ? 0 : selectedGen.price;
+  
+  const monthlyFuel = fuelPrice * consumption * 6 * 30; // 6 hours/day average
+  const monthlyTotal = monthlyFuel + maintenance;
+  const fiveYearTotal = initialCost + (monthlyTotal * 12 * 5);
 
   return (
     <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -124,11 +205,22 @@ function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; o
             <h2 className="text-3xl font-black text-stone-900 flex items-center gap-3">
               <Scale className="w-8 h-8 text-emerald-600" /> System Comparison
             </h2>
-            <p className="text-stone-500 font-medium">Comparing {systems.length} Solar Setups vs. Generator Baseline</p>
+            <p className="text-stone-500 font-medium">Comparing {systems.length} Solar Setups vs. {selectedGen.name}</p>
           </div>
-          <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-2xl border border-stone-200 shadow-sm">
+              <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">I already own this generator</span>
+              <button 
+                onClick={() => setHasGenerator(!hasGenerator)}
+                className={`w-12 h-6 rounded-full transition-all relative ${hasGenerator ? 'bg-emerald-600' : 'bg-stone-200'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${hasGenerator ? 'left-7' : 'left-1'}`} />
+              </button>
+            </div>
+            <button onClick={onClose} className="p-3 bg-white hover:bg-stone-100 rounded-2xl transition-all shadow-sm border border-stone-200">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto p-8">
@@ -145,7 +237,7 @@ function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; o
                   ))}
                   <th className="text-center p-4 bg-red-50 border-b border-red-100 text-sm font-black text-red-900 rounded-tr-2xl">
                     Generator
-                    <div className="text-[10px] font-bold text-red-600 uppercase mt-1">Baseline</div>
+                    <div className="text-[10px] font-bold text-red-600 uppercase mt-1">{selectedGen.capacity_va >= 1000 ? (selectedGen.capacity_va/1000).toFixed(1) + 'kVA' : selectedGen.capacity_va + 'VA'}</div>
                   </th>
                 </tr>
               </thead>
@@ -155,35 +247,61 @@ function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; o
                   {systems.map((s, i) => (
                     <td key={i} className="p-4 text-center font-black text-stone-900">₦{s.total_price.toLocaleString()}</td>
                   ))}
-                  <td className="p-4 text-center font-black text-red-600">₦{genInitialCost.toLocaleString()}</td>
+                  <td className="p-4 text-center font-black text-red-600">
+                    {initialCost === 0 ? (
+                      <span className="text-emerald-600">Owned</span>
+                    ) : (
+                      `₦${initialCost.toLocaleString()}`
+                    )}
+                  </td>
                 </tr>
                 <tr className="border-b border-stone-50 bg-stone-50/30">
                   <td className="p-4 font-bold text-stone-600 text-sm">Monthly Running Cost</td>
                   {systems.map((s, i) => (
                     <td key={i} className="p-4 text-center font-medium text-emerald-600">₦0 <span className="text-[10px] opacity-60">(Free Sun)</span></td>
                   ))}
-                  <td className="p-4 text-center font-black text-red-600">₦{monthlyGenTotal.toLocaleString()}</td>
+                  <td className="p-4 text-center font-black text-red-600">₦{monthlyTotal.toLocaleString()}</td>
                 </tr>
                 <tr className="border-b border-stone-50">
                   <td className="p-4 font-bold text-stone-600 text-sm">5-Year Total Cost</td>
                   {systems.map((s, i) => (
                     <td key={i} className="p-4 text-center font-black text-stone-900">₦{s.total_price.toLocaleString()}</td>
                   ))}
-                  <td className="p-4 text-center font-black text-red-600">₦{fiveYearGenTotal.toLocaleString()}</td>
+                  <td className="p-4 text-center font-black text-red-600">₦{fiveYearTotal.toLocaleString()}</td>
                 </tr>
                 <tr className="border-b border-stone-50 bg-stone-50/30">
-                  <td className="p-4 font-bold text-stone-600 text-sm">Battery Capacity</td>
+                  <td className="p-4 font-bold text-stone-600 text-sm">Amortized Monthly Cost</td>
+                  {systems.map((s, i) => {
+                    const paybackMonths = s.total_price / monthlyTotal;
+                    const amortizedPayback = s.total_price / paybackMonths;
+                    const amortizedLifespan = s.total_price / 120; // 10 years
+                    return (
+                      <td key={i} className="p-4 text-center">
+                        <div className="font-black text-stone-900 text-sm">₦{amortizedLifespan.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className="text-[10px] text-stone-400 font-bold uppercase">10yr Lifespan</div>
+                        <div className="mt-1 font-bold text-emerald-600 text-xs">₦{amortizedPayback.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className="text-[9px] text-emerald-500/70 font-bold uppercase">Till Payback</div>
+                      </td>
+                    );
+                  })}
+                  <td className="p-4 text-center">
+                    <div className="font-black text-red-600 text-sm">₦{((initialCost / selectedGen.lifespan_mo) + monthlyTotal).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                    <div className="text-[10px] text-red-400 font-bold uppercase">{selectedGen.lifespan_mo / 12}yr Lifespan</div>
+                  </td>
+                </tr>
+                <tr className="border-b border-stone-50 bg-stone-50/30">
+                  <td className="p-4 font-bold text-stone-600 text-sm">Fuel Type</td>
                   {systems.map((s, i) => (
-                    <td key={i} className="p-4 text-center text-sm font-medium">{s.battery_total_wh.toFixed(0)}Wh</td>
+                    <td key={i} className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
                   ))}
-                  <td className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
+                  <td className="p-4 text-center text-sm font-bold text-red-600">{selectedGen.fuel_type}</td>
                 </tr>
                 <tr className="border-b border-stone-50">
-                  <td className="p-4 font-bold text-stone-600 text-sm">Solar Array</td>
+                  <td className="p-4 font-bold text-stone-600 text-sm">Fuel Consumption</td>
                   {systems.map((s, i) => (
-                    <td key={i} className="p-4 text-center text-sm font-medium">{s.array_size_w}W</td>
+                    <td key={i} className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
                   ))}
-                  <td className="p-4 text-center text-sm font-medium text-stone-400">N/A</td>
+                  <td className="p-4 text-center text-sm font-medium">{selectedGen.fuel_consumption_l_hr} L/hr</td>
                 </tr>
                 <tr className="border-b border-stone-50 bg-stone-50/30">
                   <td className="p-4 font-bold text-stone-600 text-sm">Reliability</td>
@@ -210,15 +328,19 @@ function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; o
                 </div>
               ))}
               <div className="bg-red-50 p-6 rounded-3xl border border-red-100">
-                <h4 className="text-xs font-black text-red-400 uppercase tracking-widest mb-4">When Best to Use (Generator)</h4>
+                <h4 className="text-xs font-black text-red-400 uppercase tracking-widest mb-4">Generator Profile: {selectedGen.name}</h4>
                 <ul className="space-y-3">
                   <li className="flex gap-2 text-sm text-red-700 font-medium">
                     <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                    Emergency backup for very short periods.
+                    Capacity: {selectedGen.capacity_va}VA (Supports {peakWatts}W peak)
                   </li>
                   <li className="flex gap-2 text-sm text-red-700 font-medium">
                     <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                    When initial capital for solar is strictly unavailable.
+                    Running Costs: ₦{monthlyFuel.toLocaleString()} fuel + ₦{maintenance.toLocaleString()} maintenance per month.
+                  </li>
+                  <li className="flex gap-2 text-sm text-red-700 font-medium">
+                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    Environmental: High CO2 emissions and noise pollution.
                   </li>
                 </ul>
               </div>
@@ -228,8 +350,8 @@ function ComparisonModal({ systems, onClose }: { systems: SystemCombination[]; o
         
         <div className="p-8 bg-stone-50 border-t border-stone-100 text-center">
           <p className="text-sm text-stone-500 font-medium">
-            Note: Generator costs are estimates based on ₦1,100/L fuel and 6 hours daily usage. 
-            Solar systems pay for themselves in approximately <span className="text-emerald-600 font-bold">{(systems[0].total_price / monthlyGenTotal).toFixed(1)} months</span>.
+            Note: Generator costs are based on {selectedGen.fuel_type} at ₦{fuelPrice}/L and 6 hours daily usage. 
+            Solar systems pay for themselves in approximately <span className="text-emerald-600 font-bold">{(systems[0].total_price / monthlyTotal).toFixed(1)} months</span>.
           </p>
         </div>
       </motion.div>
@@ -385,6 +507,14 @@ export default function App() {
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [selectedSavedAnalysis, setSelectedSavedAnalysis] = useState<SavedResult | null>(null);
+  const [hasGenerator, setHasGenerator] = useState(() => {
+    return localStorage.getItem("ss_has_generator") === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("ss_has_generator", String(hasGenerator));
+  }, [hasGenerator]);
+
   const [selectedForComparison, setSelectedForComparison] = useState<SystemCombination[]>([]);
   const [showComparison, setShowComparison] = useState(false);
   const toggleComparison = (sys: SystemCombination) => {
@@ -1122,6 +1252,19 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
 
   return (
     <div className="min-h-screen bg-[#F5F5F4] text-[#1C1917] font-sans selection:bg-emerald-100">
+      {/* Comparison Modal - Moved higher in DOM and ensured fixed positioning */}
+      <AnimatePresence>
+        {showComparison && results && (
+          <ComparisonModal 
+            systems={selectedForComparison} 
+            analysis={results.analysis}
+            hasGenerator={hasGenerator}
+            setHasGenerator={setHasGenerator}
+            onClose={() => setShowComparison(false)} 
+          />
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="bg-white border-b border-stone-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -1580,33 +1723,34 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                               </p>
                               <div className="mt-4 flex flex-col gap-2">
                                 <button 
-                                  onClick={() => setSelectedSystemLog(sys.log)}
-                                  className="w-full md:w-auto px-6 py-2.5 bg-stone-100 text-stone-900 rounded-xl font-semibold hover:bg-stone-200 transition-all flex items-center justify-center gap-2"
+                                  onClick={() => setSelectedSystemDetails(sys)}
+                                  className="w-full px-6 py-2.5 bg-stone-900 text-white rounded-xl font-semibold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
                                 >
-                                  <ListIcon className="w-4 h-4" /> View Log
+                                  View Details <ChevronRight className="w-4 h-4" />
                                 </button>
                                 <div className="flex gap-2">
                                   <button 
+                                    onClick={() => setSelectedSystemLog(sys.log)}
+                                    className="p-2.5 bg-stone-100 text-stone-600 rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center"
+                                    title="View Calculation Logs"
+                                  >
+                                    <ListIcon className="w-5 h-5" />
+                                  </button>
+                                  <button 
                                     onClick={() => toggleComparison(sys)}
-                                    className={`p-2.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                                    className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
                                       isSelectedForComparison(sys)
                                       ? 'bg-emerald-600 text-white shadow-md'
                                       : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                                     }`}
-                                    title={isSelectedForComparison(sys) ? "Remove from comparison" : "Add to comparison"}
                                   >
-                                    <Scale className="w-5 h-5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => setSelectedSystemDetails(sys)}
-                                    className="flex-1 px-6 py-2.5 bg-stone-900 text-white rounded-xl font-semibold hover:bg-stone-800 transition-all flex items-center justify-center gap-2"
-                                  >
-                                    View Details <ChevronRight className="w-4 h-4" />
+                                    <Scale className="w-4 h-4" /> 
+                                    {isSelectedForComparison(sys) ? "Selected" : "Compare"}
                                   </button>
                                   {user && (
                                     <button 
                                       onClick={() => saveResult(sys)}
-                                      className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl font-semibold hover:bg-emerald-100 transition-all flex items-center justify-center gap-2"
+                                      className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl hover:bg-emerald-100 transition-all flex items-center justify-center"
                                       title="Save this configuration"
                                     >
                                       <Save className="w-5 h-5" />
@@ -2611,16 +2755,6 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
               </div>
             </motion.div>
           </div>
-        )}
-      </AnimatePresence>
-
-      {/* Comparison Modal */}
-      <AnimatePresence>
-        {showComparison && (
-          <ComparisonModal 
-            systems={selectedForComparison} 
-            onClose={() => setShowComparison(false)} 
-          />
         )}
       </AnimatePresence>
     </div>

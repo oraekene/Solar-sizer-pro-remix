@@ -42,7 +42,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     user_id TEXT,
     profile_name TEXT,
-    system_data TEXT, -- JSON string
+    data TEXT, -- JSON string containing the full SavedResult object
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
@@ -215,7 +215,7 @@ async function startServer() {
 
     res.json({
       profiles: profiles.map((p: any) => ({ ...p, devices: JSON.parse(p.devices) })),
-      results: results.map((r: any) => ({ ...r, system_data: JSON.parse(r.system_data) })),
+      results: results.map((r: any) => ({ ...r, ...JSON.parse(r.data) })),
       hardware: hardware.map((h: any) => ({ ...h, ...JSON.parse(h.data) }))
     });
   });
@@ -239,13 +239,13 @@ async function startServer() {
 
   app.post("/api/user/results", requireAuth, (req, res) => {
     const userId = req.session.user.id;
-    const { id, profile_name, system_data } = req.body;
+    const { id, profile_name, ...data } = req.body;
 
     const insert = db.prepare(`
-      INSERT INTO results (id, user_id, profile_name, system_data)
+      INSERT INTO results (id, user_id, profile_name, data)
       VALUES (?, ?, ?, ?)
     `);
-    insert.run(id, userId, profile_name, JSON.stringify(system_data));
+    insert.run(id, userId, profile_name, JSON.stringify(data));
     res.json({ success: true });
   });
 
