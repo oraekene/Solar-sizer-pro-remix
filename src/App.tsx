@@ -117,8 +117,8 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     capacity_va: 950,
     fuel_type: "Petrol",
     fuel_consumption_l_hr: 0.4,
-    price: 85000,
-    maintenance_mo: 3000,
+    price: 150000,
+    maintenance_mo: 4000,
     lifespan_mo: 60, // 5 years
   },
   {
@@ -126,8 +126,8 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     capacity_va: 2500,
     fuel_type: "Petrol",
     fuel_consumption_l_hr: 0.8,
-    price: 280000,
-    maintenance_mo: 5000,
+    price: 550000,
+    maintenance_mo: 8500,
     lifespan_mo: 96, // 8 years
   },
   {
@@ -135,8 +135,8 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     capacity_va: 5000,
     fuel_type: "Petrol",
     fuel_consumption_l_hr: 1.5,
-    price: 550000,
-    maintenance_mo: 8000,
+    price: 1000000,
+    maintenance_mo: 16500,
     lifespan_mo: 120, // 10 years
   },
   {
@@ -144,8 +144,8 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     capacity_va: 10000,
     fuel_type: "Diesel",
     fuel_consumption_l_hr: 2.0,
-    price: 2500000,
-    maintenance_mo: 25000,
+    price: 5500000,
+    maintenance_mo: 45000,
     lifespan_mo: 180, // 15 years
   },
   {
@@ -153,8 +153,8 @@ const GENERATOR_PROFILES: GeneratorProfile[] = [
     capacity_va: 25000,
     fuel_type: "Diesel",
     fuel_consumption_l_hr: 4.5,
-    price: 6500000,
-    maintenance_mo: 50000,
+    price: 15000000,
+    maintenance_mo: 85000,
     lifespan_mo: 240, // 20 years
   }
 ];
@@ -428,8 +428,8 @@ export default function App() {
       fetch("/api/user/data")
         .then(res => res.json())
         .then(data => {
-          if (data.profiles?.length > 0) setProfiles(data.profiles);
-          if (data.results?.length > 0) setSavedResults(data.results);
+          if (data.profiles) setProfiles(data.profiles);
+          if (data.results) setSavedResults(data.results);
           
           // Merge custom hardware
           if (data.hardware?.length > 0) {
@@ -508,7 +508,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [newDevice, setNewDevice] = useState<Partial<Device>>({
+  const [newDevice, setNewDevice] = useState<Omit<Partial<Device>, 'qty' | 'watts'> & { qty?: number | ""; watts?: number | "" }>({
     name: "",
     category: "electronics",
     qty: 1,
@@ -1488,7 +1488,7 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                       type="number" 
                       min="1"
                       value={newDevice.qty}
-                      onChange={e => setNewDevice({...newDevice, qty: parseInt(e.target.value) || 1})}
+                      onChange={e => setNewDevice({...newDevice, qty: e.target.value === "" ? "" : parseInt(e.target.value)})}
                       className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                     />
                   </div>
@@ -1497,8 +1497,8 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                     <input 
                       type="number" 
                       placeholder="60"
-                      value={newDevice.watts || ""}
-                      onChange={e => setNewDevice({...newDevice, watts: parseInt(e.target.value) || 0})}
+                      value={newDevice.watts}
+                      onChange={e => setNewDevice({...newDevice, watts: e.target.value === "" ? "" : parseInt(e.target.value)})}
                       className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                     />
                   </div>
@@ -1682,12 +1682,12 @@ Remaining Deficit: ${adjustedLoad ? adjustedLoad.deficit.toFixed(0) : sys.defici
                         >
                           <Download className="w-3.5 h-3.5" /> Export Report
                         </button>
-                        <button 
+                        {/* <button 
                           onClick={() => exportResultsJSON(results)}
                           className="bg-stone-100 text-stone-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-stone-200 transition-all border border-stone-200"
                         >
                           <Download className="w-3.5 h-3.5" /> Export JSON
-                        </button>
+                        </button> */}
                         {user && (
                           <button 
                             onClick={saveAnalysis}

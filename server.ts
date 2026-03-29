@@ -241,11 +241,14 @@ async function startServer() {
     const userId = req.session.user.id;
     const { id, profile_name, ...data } = req.body;
 
-    const insert = db.prepare(`
+    const upsert = db.prepare(`
       INSERT INTO results (id, user_id, profile_name, data)
       VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        profile_name = excluded.profile_name,
+        data = excluded.data
     `);
-    insert.run(id, userId, profile_name, JSON.stringify(data));
+    upsert.run(id, userId, profile_name, JSON.stringify(data));
     res.json({ success: true });
   });
 
